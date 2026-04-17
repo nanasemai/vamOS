@@ -40,6 +40,24 @@ vamOS 是一个用于构建车载 Linux 发行版的项目，专为 comma 设备
 - ARM64 架构交叉编译
 - 设备树配置
 
+## 支持的设备
+
+### comma 设备
+- **comma 3/3X**：基于 SDM845 SoC 的车载设备
+- **comma mici**：下一代 comma 设备
+
+### 第三方设备
+- **OnePlus 6 (enchilada)**：基于 SDM845 的智能手机
+- **OnePlus 6T (fajita)**：基于 SDM845 的智能手机（摄像头配置相同）
+
+**一加6硬件规格**：
+- SoC：Qualcomm Snapdragon 845 (SDM845)
+- CPU：4x Kryo 385 Gold @ 2.8GHz + 4x Kryo 385 Silver @ 1.8GHz
+- GPU：Adreno 630
+- 内存：6/8GB LPDDR4X
+- 存储：64/128/256GB UFS 2.1
+- 摄像头：Sony IMX371 (前置)、IMX519 (主摄)、IMX376K (广角)
+
 ## 重要约束
 
 - 内核 defconfig 必须与目标设备匹配

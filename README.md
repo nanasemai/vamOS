@@ -7,13 +7,26 @@ a new operating system for comma 3X and comma four
 
 ```
 ./vamos setup              # init submodules and udev rules
-./vamos build kernel       # build boot.img
+./vamos build kernel       # build boot.img (comma device)
+./vamos build kernel oneplus6  # build boot.img for OnePlus 6/6T
 ./vamos build system       # build system.img
 ./vamos flash kernel       # flash boot.img via EDL
+./vamos flash kernel oneplus6  # flash OnePlus 6/6T boot.img via EDL
 ./vamos flash system       # flash system.img via EDL
 ./vamos flash all          # flash both
 ./vamos profile diff A B   # diff two rootfs profiles
 ```
+
+## Supported Devices
+
+### comma Devices
+- comma 3/3X
+- comma four
+- comma mici
+
+### Third-party Devices
+- **OnePlus 6 (enchilada)** - Full camera support (IMX371, IMX519, IMX376K)
+- **OnePlus 6T (fajita)** - Same camera configuration as OnePlus 6
 
 ## Kernel Patches
 

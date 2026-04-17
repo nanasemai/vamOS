@@ -84,14 +84,19 @@ vamOS/
 
 ### 1. Linux 内核
 
-- **源码**：基于主线 Linux 内核 (https://github.com/torvalds/linux.git)
+- **源码**：基于 nanasemai/sdm845-next (sdm845-next-oneplus6 分支)，包含完整的一加6/6T支持
 - **目标架构**：arm64 (AArch64)
-- **设备树**：[sdm845-mici.dts](kernel/dts/sdm845-mici.dts) - 定义 comma mici 设备硬件配置
+- **设备树**：
+  - `sdm845-mici.dts` - comma mici 设备
+  - `sdm845-oneplus-common.dtsi` - 一加6/6T 通用配置
+  - `sdm845-oneplus-enchilada.dts` - 一加6 配置
+  - `sdm845-oneplus-fajita.dts` - 一加6T 配置
 - **补丁**：位于 `kernel/patches/` 目录
 
 构建命令：
 ```bash
-./vamos build kernel       # 构建 boot.img
+./vamos build kernel           # 构建默认设备 boot.img
+./vamos build kernel oneplus6  # 构建一加6 boot.img
 ```
 
 ### 2. 用户空间 (rootfs)
@@ -156,7 +161,7 @@ vamOS 采用**分层架构**驱动相机：
 
 ### 设备树中的相机配置
 
-在 [sdm845-mici.dts](kernel/dts/sdm845-mici.dts) 中定义了相机相关的电源：
+在 `sdm845-mici.dts` 中定义了相机相关的电源：
 
 ```dts
 // MIPI CSI 接口电源
@@ -166,6 +171,26 @@ vdda_mipi_csi2_0p9:
 ```
 
 这些电源轨为相机模块提供 0.9V、1.8V、2.8V 等电压。
+
+### 一加6摄像头支持
+
+一加6/6T 设备支持三个摄像头：
+
+| 摄像头 | 传感器 | 像素 | 接口类型 | I2C地址 |
+|--------|--------|------|----------|----------|
+| 前置 | Sony IMX371 | 16MP | DPHY (4通道) | 0x10 |
+| 后置主摄 | Sony IMX519 | 48MP | CPHY (3通道) | 0x1a |
+| 后置广角 | Sony IMX376K | 16MP | DPHY (4通道) | 0x10 |
+
+**自动对焦驱动**：ON Semiconductor LC898217XC
+
+**内核配置**：
+```
+CONFIG_VIDEO_IMX371=m
+CONFIG_VIDEO_IMX376=m
+CONFIG_VIDEO_IMX519=m
+CONFIG_VIDEO_LC898217XC=m
+```
 
 ---
 
@@ -204,9 +229,11 @@ vamOS 通过以下方式控制设备：
 
 ```bash
 ./vamos setup              # 初始化子模块和 udev 规则
-./vamos build kernel       # 构建 boot.img
+./vamos build kernel       # 构建默认设备 boot.img
+./vamos build kernel oneplus6  # 构建一加6 boot.img
 ./vamos build system       # 构建 system.img
 ./vamos flash kernel       # 通过 EDL 刷入 boot.img
+./vamos flash kernel oneplus6  # 通过 EDL 刷入一加6 boot.img
 ./vamos flash system       # 通过 EDL 刷入 system.img
 ./vamos flash all          # 刷入所有镜像
 ./vamos profile diff A B   # 对比两个 rootfs 配置
