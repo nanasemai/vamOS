@@ -105,15 +105,7 @@ apply_patches() {
   echo "-- Resetting kernel submodule to clean state --"
   clean_kernel_tree
 
-  if [ -d "$PATCHES_DIR" ] && ls "$PATCHES_DIR"/*.patch 1>/dev/null 2>&1; then
-    echo "-- Applying common patches --"
-    for patch in "$PATCHES_DIR"/*.patch; do
-      echo "Applying $(basename "$patch")"
-      git apply --check --whitespace=error "$patch"
-      git apply --whitespace=error "$patch"
-    done
-  fi
-
+  # 跳过通用补丁，sdm845-next-oneplus6 分支已包含完整支持
   if [ -d "$ONEPLUS6_PATCHES_DIR" ] && ls "$ONEPLUS6_PATCHES_DIR"/*.patch 1>/dev/null 2>&1; then
     echo "-- Applying OnePlus 6 patches --"
     for patch in "$ONEPLUS6_PATCHES_DIR"/*.patch; do

@@ -57,7 +57,7 @@ docker build -f tools/build/Dockerfile.builder -t vamos-builder "$DIR" \
   --build-arg GID="$(id -g)"
 
 echo "Starting builder container"
-MOUNT_CONTAINER_ID=$(docker run -d --privileged -v "$DIR:$DIR" vamos-builder)
+MOUNT_CONTAINER_ID=$(docker run -d --privileged -v "$DIR:$DIR" -v /dev:/dev -e http_proxy="$http_proxy" -e https_proxy="$https_proxy" -e ALL_PROXY="$ALL_PROXY" vamos-builder)
 
 # Cleanup containers on possible exit
 trap "echo \"Cleaning up containers:\"; \
