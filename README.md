@@ -10,12 +10,20 @@ a new operating system for comma 3X and comma four
 ./vamos build kernel       # build boot.img (comma device)
 ./vamos build kernel oneplus6  # build boot.img for OnePlus 6/6T
 ./vamos build system       # build system.img
-./vamos flash kernel       # flash boot.img via EDL
-./vamos flash kernel oneplus6  # flash OnePlus 6/6T boot.img via EDL
+./vamos flash kernel       # flash boot.img to comma device via EDL (--legacy for legacy)
+./vamos flash kernel oneplus6  # flash OnePlus 6/6T boot.img via fastboot
 ./vamos flash system       # flash system.img via EDL
-./vamos flash all          # flash both
+./vamos flash all          # flash gpt + firmware + kernel + system (comma devices)
+./vamos fastboot boot oneplus6  # alternative: flash kernel via fastboot
 ./vamos profile diff A B   # diff two rootfs profiles
 ```
+
+### OnePlus 6/6T Flashing Instructions
+
+1. Power off your OnePlus 6/6T
+2. Hold **Volume Up + Power** to enter fastboot mode
+3. Connect USB cable to your computer
+4. Run: `./vamos flash kernel oneplus6`
 
 ## Supported Devices
 

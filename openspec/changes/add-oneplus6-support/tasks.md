@@ -20,8 +20,9 @@
 - [x] 5.1 创建 tools/build/build_kernel_oneplus6.sh - 已创建
 - [x] 5.2 添加一加6设备树到构建目标 - 脚本已配置
 - [x] 5.3 更新 vamos 主脚本支持 oneplus6 构建目标
-- [x] 5.4 更新 flash/kernel.sh 支持 --oneplus6 参数
-- [ ] 5.5 测试构建流程
+- [x] 5.4 创建 tools/flash/kernel_fastboot.sh - 一加6专用fastboot刷写脚本
+- [x] 5.5 更新 vamos 添加 fastboot 命令支持
+- [ ] 5.6 测试构建流程
 
 ## 6. 测试验证
 - [ ] 6.1 验证内核编译成功

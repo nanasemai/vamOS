@@ -17,13 +17,6 @@ if [ "${1:-}" = "--legacy" ]; then
     curl -fSL "$LEGACY_KERNEL_URL" | xz -d > "$LEGACY_IMG"
   fi
   tools/bin/qdl flash boot "$LEGACY_IMG"
-elif [ "${1:-}" = "--oneplus6" ]; then
-  BOOT_IMG="$BUILD_DIR/boot-oneplus6.img"
-  if [ ! -f "$BOOT_IMG" ]; then
-    echo "boot-oneplus6.img not found, building OnePlus 6 kernel..."
-    "$DIR/vamos" build kernel oneplus6
-  fi
-  tools/bin/qdl flash boot "$BOOT_IMG"
 else
   BOOT_IMG="$BUILD_DIR/boot.img"
   if [ ! -f "$BOOT_IMG" ]; then

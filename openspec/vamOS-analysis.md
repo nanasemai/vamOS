@@ -232,12 +232,22 @@ vamOS 通过以下方式控制设备：
 ./vamos build kernel       # 构建默认设备 boot.img
 ./vamos build kernel oneplus6  # 构建一加6 boot.img
 ./vamos build system       # 构建 system.img
-./vamos flash kernel       # 通过 EDL 刷入 boot.img
-./vamos flash kernel oneplus6  # 通过 EDL 刷入一加6 boot.img
+./vamos flash kernel       # 通过 EDL 刷入 comma 设备 boot.img
+./vamos flash kernel oneplus6  # 通过 fastboot 刷入一加6 boot.img
 ./vamos flash system       # 通过 EDL 刷入 system.img
-./vamos flash all          # 刷入所有镜像
+./vamos flash all          # 刷入所有镜像 (comma 设备)
+./vamos fastboot boot oneplus6  # 快速刷入一加6内核
 ./vamos profile diff A B   # 对比两个 rootfs 配置
 ```
+
+### 一加6刷写说明
+
+一加6/6T 不支持 EDL 模式，必须使用 fastboot：
+
+1. 关机
+2. 按住 **音量上键 + 电源键** 进入 fastboot 模式
+3. 连接 USB 线到电脑
+4. 运行刷写命令
 
 ### 刷机方式
 
