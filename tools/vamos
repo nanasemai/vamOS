@@ -27,33 +27,55 @@ case "${1:-}" in
   setup)    setup ;;
   build)
     case "${2:-}" in
-      kernel) exec "$DIR/tools/build/build_kernel.sh" ;;
+      kernel)
+        case "${3:-}" in
+          "")       exec "$DIR/tools/build/build_kernel.sh" ;;
+          oneplus6) exec "$DIR/tools/build/build_kernel_oneplus6.sh" ;;
+          *)        echo "Usage: vamos build kernel [oneplus6]"; exit 1 ;;
+        esac ;;
       system) exec "$DIR/tools/build/build_system.sh" ;;
       *)      echo "Usage: vamos build <kernel|system>"; exit 1 ;;
     esac ;;
   flash)
     case "${2:-}" in
-      kernel)   exec "$DIR/tools/flash/kernel.sh" "${3:-}" ;;
+      kernel)
+        case "${3:-}" in
+          "")       exec "$DIR/tools/flash/kernel.sh" "${4:-}" ;;
+          oneplus6) exec "$DIR/tools/flash/kernel_fastboot.sh" oneplus6 ;;
+          *)        echo "Usage: vamos flash kernel [oneplus6]"; exit 1 ;;
+        esac ;;
       system)   exec "$DIR/tools/flash/system.sh" ;;
       firmware) exec "$DIR/tools/flash/firmware.sh" ;;
       gpt)      exec "$DIR/tools/flash/gpt.sh" ;;
       all)      "$DIR/tools/flash/gpt.sh" && "$DIR/tools/flash/firmware.sh" && "$DIR/tools/flash/kernel.sh" && "$DIR/tools/flash/system.sh" ;;
       *)        echo "Usage: vamos flash <kernel|system|firmware|gpt|all>"; exit 1 ;;
     esac ;;
+  fastboot)
+    case "${2:-}" in
+      boot)
+        case "${3:-}" in
+          oneplus6) exec "$DIR/tools/flash/kernel_fastboot.sh" oneplus6 ;;
+          *)        echo "Usage: vamos fastboot boot <oneplus6>"; exit 1 ;;
+        esac ;;
+      *)        echo "Usage: vamos fastboot <boot>"; exit 1 ;;
+    esac ;;
   profile)
     shift
     exec "$DIR/tools/profile/rootfs.sh" "$@" ;;
   *)
-    echo "Usage: vamos <setup|build|flash|profile>"
+    echo "Usage: vamos <setup|build|flash|fastboot|profile>"
     echo ""
-    echo "  setup              Initialize submodules and udev rules"
-    echo "  build kernel       Build the kernel (output/boot.img)"
-    echo "  build system       Build the system image (output/system.img)"
-    echo "  flash kernel       Flash boot.img to device via EDL (--legacy for legacy kernel)"
-    echo "  flash system       Flash system.img to device via EDL"
-    echo "  flash firmware     Flash firmware partitions to device via EDL"
-    echo "  flash gpt          Flash GPT partition tables to device via EDL"
-    echo "  flash all          Flash gpt + firmware + kernel + system"
-    echo "  profile [diff]     Profile rootfs or diff two profiles"
+    echo "  setup                  Initialize submodules and udev rules"
+    echo "  build kernel           Build the kernel (output/boot.img)"
+    echo "  build kernel oneplus6  Build the OnePlus 6 kernel (output/boot-oneplus6.img)"
+    echo "  build system           Build the system image (output/system.img)"
+    echo "  flash kernel           Flash boot.img to comma device via EDL (--legacy for legacy kernel)"
+    echo "  flash kernel oneplus6  Flash OnePlus 6 boot.img via fastboot"
+    echo "  flash system           Flash system.img to device via EDL"
+    echo "  flash firmware         Flash firmware partitions to device via EDL"
+    echo "  flash gpt              Flash GPT partition tables to device via EDL"
+    echo "  flash all              Flash gpt + firmware + kernel + system (comma devices)"
+    echo "  fastboot boot oneplus6 Flash kernel to OnePlus 6/6T via fastboot"
+    echo "  profile [diff]         Profile rootfs or diff two profiles"
     exit 1 ;;
 esac

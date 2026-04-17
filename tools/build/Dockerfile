@@ -15,6 +15,16 @@ RUN mkdir -p /tmp/vamos
 
 ARG USERNAME=comma
 
+# Proxy environment variables
+ARG http_proxy
+ARG https_proxy
+ARG ALL_PROXY
+ENV http_proxy=${http_proxy}
+ENV https_proxy=${https_proxy}
+ENV ALL_PROXY=${ALL_PROXY}
+ENV HTTP_PROXY=${http_proxy}
+ENV HTTPS_PROXY=${https_proxy}
+
 # Base system setup
 COPY ./userspace/base_setup.sh /tmp/vamos/
 RUN /tmp/vamos/base_setup.sh

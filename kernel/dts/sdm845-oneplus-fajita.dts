@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2024, The Linux Foundation. All rights reserved.
+ */
+
+/dts-v1/;
+
+#include "sdm845-oneplus-common.dtsi"
+
+/ {
+	model = "OnePlus 6T";
+	compatible = "oneplus,fajita", "qcom,sdm845";
+	chassis-type = "handset";
+
+	aliases {
+		serial0 = &uart1;
+		serial1 = &uart2;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+};
+
+&i2c_8 {
+	clock-frequency = <100000>;
+};
+
+&uart1 {
+	status = "okay";

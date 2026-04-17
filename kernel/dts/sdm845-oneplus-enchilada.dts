@@ -1,0 +1,228 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2024, The Linux Foundation. All rights reserved.
+ */
+
+/dts-v1/;
+
+#include "sdm845-oneplus-common.dtsi"
+
+/ {
+	model = "OnePlus 6";
+	compatible = "oneplus,enchilada", "qcom,sdm845";
+	chassis-type = "handset";
+
+	aliases {
+		serial0 = &uart1;
+		serial1 = &uart2;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+};
+
+&i2c_8 {
+	clock-frequency = <100000>;
+};
+
+&uart1 {
+	status = "okay";
+};
+
+&uart2 {
+	status = "okay";
+};
+
+&usb {
+	status = "okay";
+};
+
+&ufshc {
+	status = "okay";
+};
+
+&sdhc_1 {
+	status = "okay";
+};
+
+&sdhc_2 {
+	status = "okay";
+};
+
+&wlan {
+	status = "okay";
+};
+
+&blsp1_uart2 {
+	status = "okay";
+};
+
+&blsp2_uart1 {
+	status = "okay";
+};
+
+&qspi {
+	status = "okay";
+};
+
+&tlmm {
+	gpio-reserved-ranges = <0 8>, <17 2>, <23 2>, <27 1>, <31 1>,
+			       <77 5>, <104 1>, <117 1>;
+};
+
+&pm8998_gpios {
+	status = "okay";
+};
+
+&pm8005_gpios {
+	status = "okay";
+};
+
+&pm8998_pwm {
+	status = "okay";
+};
+
+&pm8998_lpg {
+	status = "okay";
+};
+
+&soc {
+	ranges = <0x0 0x0 0x0 0x100000000>;
+};
+
+&mss_pil {
+	status = "okay";
+};
+
+&adsp_pil {
+	status = "okay";
+};
+
+&cdsp_pil {
+	status = "okay";
+};
+
+&mdss_dsi {
+	status = "okay";
+};
+
+&mdss_dsi_phy {
+	status = "okay";
+};
+
+&mdss_dsi_panel {
+	status = "okay";
+};
+
+&dsi0 {
+	status = "okay";
+};
+
+&dsi0_phy {
+	status = "okay";
+};
+
+&msm_drm {
+	status = "okay";
+};
+
+&kgsl_3d0 {
+	status = "okay";
+};
+
+&video_codec {
+	status = "okay";
+};
+
+&vcodec_dec {
+	status = "okay";
+};
+
+&vcodec_enc {
+	status = "okay";
+};
+
+&venus {
+	status = "okay";
+};
+
+&dispcc {
+	status = "okay";
+};
+
+&gpucc {
+	status = "okay";
+};
+
+&clock_camcc {
+	status = "okay";
+};
+
+&clock_videocc {
+	status = "okay";
+};
+
+&clock_lpasscc {
+	status = "okay";
+};
+
+&clock_gcc {
+	status = "okay";
+};
+
+&clock_tcsrcc {
+	status = "okay";
+};
+
+&clock_mmcc {
+	status = "okay";
+};
+
+&clock_mpcc {
+	status = "okay";
+};
+
+&clock_dispcc {
+	status = "okay";
+};
+
+&clock_gpucc {
+	status = "okay";
+};
+
+&clock_camcc {
+	status = "okay";
+};
+
+&clock_videocc {
+	status = "okay";
+};
+
+&clock_lpasscc {
+	status = "okay";
+};
+
+&clock_gcc {
+	status = "okay";
+};
+
+&clock_tcsrcc {
+	status = "okay";
+};
+
+&clock_mmcc {
+	status = "okay";
+};
+
+&clock_mpcc {
+	status = "okay";
+};
+
+&clock_dispcc {
+	status = "okay";
+};
+
+&clock_gpucc {
+	status = "okay";
+};

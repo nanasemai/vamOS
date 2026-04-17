@@ -91,7 +91,11 @@ echo "Building and extracting vamos docker image"
 docker buildx build -f tools/build/Dockerfile --platform=linux/arm64 \
   --output "type=tar,dest=-" \
   --provenance=false \
+  --network=host \
   --build-arg VOID_ROOTFS="${VOID_ROOTFS_FILE#"$DIR/"}" \
+  --build-arg http_proxy="$http_proxy" \
+  --build-arg https_proxy="$https_proxy" \
+  --build-arg ALL_PROXY="$ALL_PROXY" \
   "$DIR" | docker exec -i "$MOUNT_CONTAINER_ID" tar -xf - -C "$ROOTFS_DIR"
 echo "Build and extraction complete"
 

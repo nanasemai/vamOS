@@ -1,0 +1,306 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2024, The Linux Foundation. All rights reserved.
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+
+&camss {
+	status = "okay";
+
+	camera_rear: camera@1 {
+		status = "okay";
+		compatible = "qcom,camera";
+		reg = <0x0 0xc100000 0x0 0x400000>;
+		reg-names = "csiphy0";
+	};
+
+	camera_front: camera@2 {
+		status = "okay";
+		compatible = "qcom,camera";
+		reg = <0x0 0xc500000 0x0 0x400000>;
+		reg-names = "csiphy2";
+	};
+
+	camera_wide: camera@3 {
+		status = "okay";
+		compatible = "qcom,camera";
+		reg = <0x0 0xc900000 0x0 0x400000>;
+		reg-names = "csiphy1";
+	};
+};
+
+&cci_i2c0 {
+	status = "okay";
+	clock-frequency = <400000>;
+
+	imx519@1a {
+		compatible = "sony,imx519";
+		reg = <0x1a>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_sensor_mclk0>;
+
+		clocks = <&clock_camcc CAM_CCI_MCLK0_CLK>;
+		clock-names = "xclk";
+
+		vddio-supply = <&main_cam_vdig>;
+		vdda-supply = <&main_cam_vana>;
+		vddaf-supply = <&main_cam_vaf>;
+
+		reset-gpios = <&tlmm 31 GPIO_ACTIVE_LOW>;
+
+		port {
+			imx519_ep: endpoint {
+				remote-endpoint = <&csiphy0_ep>;
+				data-lanes = <1 2 3>;
+				clock-lanes = <0>;
+				link-frequencies = /bits/ 64 <540000000>;
+			};
+		};
+	};
+
+	imx371@10 {
+		compatible = "sony,imx371";
+		reg = <0x10>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_sensor_mclk2>;
+
+		clocks = <&clock_camcc CAM_CCI_MCLK2_CLK>;
+		clock-names = "xclk";
+
+		vddio-supply = <&front_cam_vdig>;
+		vdda-supply = <&front_cam_vana>;
+
+		reset-gpios = <&tlmm 117 GPIO_ACTIVE_LOW>;
+
+		port {
+			imx371_ep: endpoint {
+				remote-endpoint = <&csiphy2_ep>;
+				data-lanes = <1 2 3 4>;
+				clock-lanes = <0>;
+				link-frequencies = /bits/ 64 <360000000>;
+			};
+		};
+	};
+};
+
+&cci_i2c1 {
+	status = "okay";
+	clock-frequency = <400000>;
+
+	imx376@10 {
+		compatible = "sony,imx376";
+		reg = <0x10>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_sensor_mclk1>;
+
+		clocks = <&clock_camcc CAM_CCI_MCLK1_CLK>;
+		clock-names = "xclk";
+
+		vddio-supply = <&sub_cam_vdig>;
+		vdda-supply = <&sub_cam_vana>;
+		vddaf-supply = <&sub_cam_vaf>;
+
+		reset-gpios = <&tlmm 79 GPIO_ACTIVE_LOW>;
+
+		port {
+			imx376_ep: endpoint {
+				remote-endpoint = <&csiphy1_ep>;
+				data-lanes = <1 2 3 4>;
+				clock-lanes = <0>;
+				link-frequencies = /bits/ 64 <360000000>;
+			};
+		};
+	};
+};
+
+&i2c_8 {
+	status = "okay";
+
+	af_main@72 {
+		compatible = "onnn,lc898217xc";
+		reg = <0x72>;
+		vdd-supply = <&main_cam_vaf>;
+	};
+
+	af_sub@74 {
+		compatible = "onnn,lc898217xc";
+		reg = <0x74>;
+		vdd-supply = <&sub_cam_vaf>;
+	};
+};
+
+&csiphy0 {
+	status = "okay";
+
+	port {
+		csiphy0_ep: endpoint {
+			remote-endpoint = <&imx519_ep>;
+			data-lanes = <1 2 3>;
+			clock-lanes = <0>;
+			phy-type = <CSI_PHY_TYPE_CPHY>;
+		};
+	};
+};
+
+&csiphy1 {
+	status = "okay";
+
+	port {
+		csiphy1_ep: endpoint {
+			remote-endpoint = <&imx376_ep>;
+			data-lanes = <1 2 3 4>;
+			clock-lanes = <0>;
+			phy-type = <CSI_PHY_TYPE_DPHY>;
+		};
+	};
+};
+
+&csiphy2 {
+	status = "okay";
+
+	port {
+		csiphy2_ep: endpoint {
+			remote-endpoint = <&imx371_ep>;
+			data-lanes = <1 2 3 4>;
+			clock-lanes = <0>;
+			phy-type = <CSI_PHY_TYPE_DPHY>;
+		};
+	};
+};
+
+&tlmm {
+	cam_sensor_mclk0: cam-sensor-mclk0 {
+		pins = "gpio8";
+		function = "cam_mclk0";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	cam_sensor_mclk1: cam-sensor-mclk1 {
+		pins = "gpio78";
+		function = "cam_mclk1";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	cam_sensor_mclk2: cam-sensor-mclk2 {
+		pins = "gpio104";
+		function = "cam_mclk2";
+		drive-strength = <8>;
+		bias-disable;
+	};
+};
+
+&pm8998_l17 {
+	regulator-min-microvolt = <1050000>;
+	regulator-max-microvolt = <1050000>;
+};
+
+&pm8998_l24 {
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
+};
+
+&pm8998_l25 {
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
+};
+
+&pm8998_l26 {
+	regulator-min-microvolt = <1050000>;
+	regulator-max-microvolt = <1050000>;
+};
+
+&pm8998_l27 {
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
+};
+
+&pm8998_l28 {
+	regulator-min-microvolt = <1050000>;
+	regulator-max-microvolt = <1050000>;
+};
+
+&pm8998_l29 {
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
+};
+
+&pm8998_l30 {
+	regulator-min-microvolt = <1050000>;
+	regulator-max-microvolt = <1050000>;
+};
+
+main_cam_vdig: regulator@1 {
+	compatible = "regulator-fixed";
+	regulator-name = "main_cam_vdig";
+	regulator-min-microvolt = <1050000>;
+	regulator-max-microvolt = <1050000>;
+	gpio = <&tlmm 8 GPIO_ACTIVE_HIGH>;
+	enable-active-high;
+};
+
+main_cam_vana: regulator@2 {
+	compatible = "regulator-fixed";
+	regulator-name = "main_cam_vana";
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
+	gpio = <&tlmm 27 GPIO_ACTIVE_HIGH>;
+	enable-active-high;
+};
+
+main_cam_vaf: regulator@3 {
+	compatible = "regulator-fixed";
+	regulator-name = "main_cam_vaf";
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
+	gpio = <&tlmm 31 GPIO_ACTIVE_HIGH>;
+	enable-active-high;
+};
+
+front_cam_vdig: regulator@4 {
+	compatible = "regulator-fixed";
+	regulator-name = "front_cam_vdig";
+	regulator-min-microvolt = <1050000>;
+	regulator-max-microvolt = <1050000>;
+	gpio = <&tlmm 117 GPIO_ACTIVE_HIGH>;
+	enable-active-high;
+};
+
+front_cam_vana: regulator@5 {
+	compatible = "regulator-fixed";
+	regulator-name = "front_cam_vana";
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
+	gpio = <&tlmm 104 GPIO_ACTIVE_HIGH>;
+	enable-active-high;
+};
+
+sub_cam_vdig: regulator@6 {
+	compatible = "regulator-fixed";
+	regulator-name = "sub_cam_vdig";
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
+	gpio = <&tlmm 78 GPIO_ACTIVE_HIGH>;
+	enable-active-high;
+};
+
+sub_cam_vana: regulator@7 {
+	compatible = "regulator-fixed";
+	regulator-name = "sub_cam_vana";
+	regulator-min-microvolt = <1050000>;
+	regulator-max-microvolt = <1050000>;
+	gpio = <&tlmm 79 GPIO_ACTIVE_HIGH>;
+	enable-active-high;
+};
+
+sub_cam_vaf: regulator@8 {
+	compatible = "regulator-fixed";
+	regulator-name = "sub_cam_vaf";
+	regulator-min-microvolt = <2800000>;
+	regulator-max-microvolt = <2800000>;
+	gpio = <&tlmm 77 GPIO_ACTIVE_HIGH>;
+	enable-active-high;
+};
