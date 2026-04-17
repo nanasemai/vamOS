@@ -22,7 +22,8 @@
 - [x] 5.3 更新 vamos 主脚本支持 oneplus6 构建目标
 - [x] 5.4 创建 tools/flash/kernel_fastboot.sh - 一加6专用fastboot刷写脚本
 - [x] 5.5 更新 vamos 添加 fastboot 命令支持
-- [ ] 5.6 测试构建流程
+- [x] 5.6 添加一加6内核固件文件 (firmware/qcom/sdm845/oneplus6/)
+- [ ] 5.7 测试构建流程
 
 ## 6. 测试验证
 - [ ] 6.1 验证内核编译成功
