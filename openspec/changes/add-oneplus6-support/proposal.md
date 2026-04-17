@@ -16,7 +16,17 @@
   - 摄像头传感器驱动（IMX371前置、IMX376K广角、IMX519主摄）
   - 自动对焦驱动（LC898217XC）
   - SDM845平台完整配置
-- 创建独立的构建脚本支持一加6设备
+- **内核配置**：创建 kernel/configs/oneplus6/oneplus6.config 配置文件
+  - 启用一加6显示面板 (CONFIG_DRM_PANEL_SAMSUNG_SOFEF00=y)
+  - 禁用一加6T显示面板 (CONFIG_DRM_PANEL_SAMSUNG_S6E3FC2X01=n)
+  - 配置摄像头驱动为模块模式
+- **固件文件**：添加完整的一加6内核固件
+  - QCOM 平台固件 (adsp.mbn, cdsp.mbn, venus.mbn, modem.mbn 等)
+  - WiFi/蓝牙固件 (crnv21.bin)
+- **构建脚本**：创建独立的一加6构建和刷写脚本
+  - tools/build/build_kernel_oneplus6.sh
+  - tools/flash/kernel_fastboot.sh
+- **vamos 命令支持**：添加 `build kernel oneplus6` 和 `flash kernel oneplus6` 命令
 - **非破坏性变更**：不修改现有 comma 设备的配置
 
 ## Impact

@@ -54,6 +54,12 @@
   - CONFIG_VIDEO_IMX519=m
   - CONFIG_VIDEO_LC898217XC=m
 
+### Decision 5: 显示面板配置隔离
+- **理由**: 一加6和一加6T使用不同的显示面板，需要正确配置避免冲突。
+- **配置**:
+  - 一加6: CONFIG_DRM_PANEL_SAMSUNG_SOFEF00=y
+  - 一加6T: CONFIG_DRM_PANEL_SAMSUNG_S6E3FC2X01=n（禁用）
+
 ### Decision 4: 复用现有的构建框架
 - **理由**: 保持构建流程一致，减少学习成本。
 - **实现**: 创建 build_kernel_oneplus6.sh 脚本，复用现有 Docker 构建环境。

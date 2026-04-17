@@ -69,16 +69,22 @@
 
 ## 依赖项
 
-### 固件（待提供）
-- [ ] WiFi 固件 (QCA6174)
-- [ ] 蓝牙固件
-- [ ] 调制解调器固件
-- [ ] 摄像头固件
-- [ ] 显示固件
+### 固件（已添加）
+- [x] ADSP 固件 (adsp.mbn)
+- [x] CDSP 固件 (cdsp.mbn)
+- [x] IPA 固件 (ipa_fws.mbn)
+- [x] MBA 固件 (mba.mbn)
+- [x] 调制解调器固件 (modem.mbn)
+- [x] SLPI 固件 (slpi.mbn)
+- [x] Venus 视频固件 (venus.mbn)
+- [x] WiFi 固件 (wlanmdsp.mbn)
+- [x] GPU zap 固件 (a630_zap.mbn)
+- [x] WiFi/蓝牙固件 (crnv21.bin)
 
 ### 配置文件
 - [x] 内核配置参考 - linux-kernel-7.0/arch/arm64/configs/oneplus6-7.0.defconfig
 - [x] 设备树参考 - linux-kernel-7.0/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi
+- [x] 项目配置文件 - kernel/configs/oneplus6/oneplus6.config
 
 ## 兼容性说明
 

@@ -8,7 +8,10 @@
 ## 2. 内核配置准备
 - [x] 2.1 创建 kernel/configs/oneplus6/ 目录 - 已创建
 - [x] 2.2 从内核子模块复制 oneplus6.config 配置文件
-- [x] 2.3 摄像头和SDM845平台支持已在内核分支中配置
+- [x] 2.3 配置一加6显示面板 (CONFIG_DRM_PANEL_SAMSUNG_SOFEF00=y)
+- [x] 2.4 禁用一加6T显示面板 (CONFIG_DRM_PANEL_SAMSUNG_S6E3FC2X01=n)
+- [x] 2.5 配置摄像头驱动 (CONFIG_VIDEO_IMX371/IMX376/IMX519=m)
+- [x] 2.6 配置自动对焦驱动 (CONFIG_VIDEO_LC898217XC=m)
 
 ## 3. 设备树配置
 - [x] 3.1-3.7 设备树文件已包含在内核子模块中（sdm845-oneplus-*.dts）
