@@ -1,0 +1,37 @@
+# vamOS Void Linux fstab - OnePlus 6 Configuration
+# 一加6设备专用 fstab 配置
+# 基于 SDM845 平台，与 comma 3/3X 兼容
+# <file system>                           <dir>       <type>  <options>                                                    <dump> <pass>
+
+# Root filesystem - OnePlus 6 system_a partition (sda13)
+# 根文件系统 - 一加6 system_a 分区
+/dev/disk/by-partlabel/system_a           /           ext4    errors=remount-ro,noatime,nodiratime                         0      1
+
+# Qualcomm DSP firmware partition (read-only)
+# OnePlus 6 使用相同的 DSP 固件分区布局
+/dev/disk/by-partlabel/dsp_a              /dsp        ext4    ro,nofail                                                    0      0
+
+# Modem firmware partition (read-only)
+# 调制解调器固件分区
+/dev/disk/by-partlabel/modem_a            /firmware   vfat    ro,nofail                                                    0      0
+
+# Persistent storage partition (read-only)
+# 持久化存储分区 - 包含 NV 存储和校准数据
+/dev/disk/by-partlabel/persist            /persist    squashfs ro,nosuid,nodev,noexec,nofail                               0      0
+
+# Userdata partition (main writable storage)
+# 用户数据分区 - 主存储
+/dev/disk/by-partlabel/userdata           /data       ext4    discard,noatime,nodiratime,nosuid,nodev,nofail               0      0
+
+# Cache partition
+# 缓存分区
+/dev/disk/by-partlabel/cache              /cache      ext4    relatime,data=ordered,noauto_da_alloc,discard,noexec,nodev,nosuid,nofail 0 0
+
+# OnePlus 6 specific: Reserve boot partition for kernel
+# 保留 boot 分区挂载点 (可选)
+/dev/disk/by-partlabel/boot              /boot       ext4    ro,nofail                                                    0      0
+
+# tmpfs mounts
+tmpfs                                /var       tmpfs   rw,nosuid,nodev,size=128M,mode=755                           0      0
+tmpfs                                /tmp       tmpfs   rw,nosuid,nodev,size=150M,mode=1777                          0      0
+tmpfs                                /rwtmp     tmpfs   rw,nosuid,nodev,size=100M,mode=1777                          0      0

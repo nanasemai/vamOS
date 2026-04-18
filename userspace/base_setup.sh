@@ -173,6 +173,21 @@ export PATH="$HOME/.local/bin:$PATH"
 # Install Python 3.12 via uv (Void has 3.14 which is too new)
 uv python install 3.12
 
+# Install bootmac from postmarketOS (for WiFi/Bluetooth MAC address persistence)
+# Required for OnePlus 6 and similar devices
+if command -v git >/dev/null 2>&1; then
+  BOOTMAC_TMP=$(mktemp -d)
+  git clone https://gitlab.postmarketos.org/postmarketOS/bootmac.git "${BOOTMAC_TMP}" 2>/dev/null || true
+  if [ -f "${BOOTMAC_TMP}/bootmac" ]; then
+    install -m 755 "${BOOTMAC_TMP}/bootmac" /usr/bin/bootmac
+    rm -rf "${BOOTMAC_TMP}"
+    echo "bootmac installed successfully"
+  else
+    rm -rf "${BOOTMAC_TMP}"
+    echo "Warning: bootmac clone failed, WiFi MAC persistence may not work"
+  fi
+fi
+
 # Create venv with Python 3.12
 uv venv $XDG_DATA_HOME/venv --seed --python 3.12
 

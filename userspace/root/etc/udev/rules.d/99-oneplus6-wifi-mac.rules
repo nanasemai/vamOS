@@ -1,0 +1,14 @@
+# OnePlus 6 WiFi/Bluetooth MAC Address Configuration via udev
+# 基于 bootmac 方案修改，使用 udev 规则在接口出现时设置 MAC
+# 一加6 WiFi/蓝牙 MAC 地址配置
+
+# WiFi 接口 MAC 地址设置
+# 当 wlan* 接口被添加时触发
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="wlan*", RUN+="/usr/bin/bootmac --wlan || echo 'WiFi MAC设置失败，将在系统启动后重试'"
+
+# 蓝牙接口 MAC 地址设置
+# 当 hci* 接口被添加时触发，添加延迟确保设备就绪
+ACTION=="add", SUBSYSTEM=="bluetooth", KERNEL=="hci*", RUN+="/bin/bash -c 'sleep 2 && /usr/bin/bootmac --bluetooth || echo \"蓝牙MAC设置失败，将在系统启动后重试\"'"
+
+# 确保 bootmac 工具有执行权限
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="wlan*", RUN+="/bin/chmod +x /usr/bin/bootmac 2>/dev/null || true"

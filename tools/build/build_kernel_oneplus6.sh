@@ -27,6 +27,11 @@ KERNEL_LINUX_VOLUME="vamos-kernel-linux-oneplus6"
 CCACHE_VOLUME="vamos-kernel-ccache-oneplus6"
 CONTAINER_ID=""
 
+# initrd settings for development phase
+INITRD_REPO="https://gitlab.com/sdm845-mainline/initrd.git"
+INITRD_DIR="$DIR/kernel/patches/oneplus6"
+INITRD_FILE="$INITRD_DIR/initrd.cpio.gz"
+
 prepare_kernel_volume() {
   docker volume create "$KERNEL_LINUX_VOLUME" >/dev/null
   docker run --rm \
@@ -162,7 +167,7 @@ build_kernel() {
   done
 
   echo "-- Building OnePlus 6 kernel with $(nproc) cores --"
-  make -j$(nproc) O=out Image.gz "${dtb_targets[@]}"
+  make -j8 O=out Image.gz "${dtb_targets[@]}"
 
   mkdir -p "$TMP_DIR"
   IMAGE_GZ_DTB="$TMP_DIR/Image.gz-dtb"
@@ -179,13 +184,14 @@ build_kernel() {
   mkdir -p "$OUT_DIR"
   $TOOLS/mkbootimg \
     --kernel Image.gz-dtb \
-    --ramdisk /dev/null \
-    --cmdline "console=ttyMSM0,115200n8 earlycon=msm_geni_serial,0xA84000 androidboot.hardware=qcom androidboot.console=ttyMSM0 ehci-hcd.park=3 lpm_levels.sleep_disabled=1 service_locator.enable=1 androidboot.selinux=permissive firmware_class.path=/lib/firmware/updates net.ifnames=0" \
+    --ramdisk "$INITRD_FILE" \
+    --cmdline "earlycon=tty0 earlyprintk root=/dev/sda13 rootfstype=ext4 rootwait=10 loglevel=7 debug rw splash androidboot.hardware=qcom androidboot.selinux=permissive" \
     --pagesize 4096 \
-    --base 0x80000000 \
-    --kernel_offset 0x8000 \
-    --ramdisk_offset 0x8000 \
-    --tags_offset 0x100 \
+    --base 0x00000000 \
+    --kernel_offset 0x00008000 \
+    --ramdisk_offset 0x01000000 \
+    --tags_offset 0x00000100 \
+    --second_offset 0x00f00000 \
     --output $BOOT_IMG.nonsecure
 
   openssl dgst -sha256 -binary $BOOT_IMG.nonsecure > $BOOT_IMG.sha256
@@ -225,9 +231,9 @@ EOF
 
 install_dts() {
   echo "-- Checking OnePlus 6 DTS/DTSI files (already included in kernel submodule) --"
-  
+
   local dst_dir="$KERNEL_DIR/arch/arm64/boot/dts/qcom"
-  
+
   for dts in "${DTS_FILES[@]}"; do
     local dts_name="$(basename "$dts")"
     if [ ! -f "$dst_dir/$dts_name" ]; then
@@ -235,10 +241,46 @@ install_dts() {
       exit 1
     fi
   done
-  
+
   echo "-- OnePlus 6 DTS files are present in kernel submodule --"
 }
 
+clone_initrd() {
+  if [ ! -d "$INITRD_DIR" ]; then
+    echo "-- Cloning SDM845 initrd from $INITRD_REPO --"
+    git clone "$INITRD_REPO" "$INITRD_DIR"
+  else
+    echo "-- Using existing initrd from $INITRD_DIR --"
+  fi
+}
+
+build_initrd() {
+  clone_initrd
+
+  echo "-- Building SDM845 initrd --"
+  cd "$INITRD_DIR"
+  if [ ! -f initrd.cpio.gz ]; then
+    ./build.sh
+  fi
+
+  if [ ! -f initrd.cpio.gz ]; then
+    echo "Error: initrd.cpio.gz not found after build"
+    exit 1
+  fi
+
+  echo "-- initrd.cpio.gz built successfully --"
+  ls -lh initrd.cpio.gz
+}
+
+check_initrd() {
+  if [ ! -f "$INITRD_FILE" ]; then
+    echo "-- initrd.cpio.gz not found, building... --"
+    build_initrd
+  fi
+  echo "-- Using initrd: $INITRD_FILE --"
+}
+
+check_initrd
 docker exec -i -u "$(id -u):$(id -g)" "$CONTAINER_ID" bash <<EOF
 set -e
 
@@ -254,6 +296,7 @@ ONEPLUS6_PATCHES_DIR='$ONEPLUS6_PATCHES_DIR'
 TMP_DIR='$TMP_DIR'
 OUT_DIR='$OUT_DIR'
 BOOT_IMG='$BOOT_IMG'
+INITRD_FILE='$INITRD_FILE'
 
 DTS_FILES=(
   '${DTS_FILES[0]}'

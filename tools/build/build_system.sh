@@ -18,8 +18,8 @@ ROOTFS_IMAGE="$BUILD_DIR/system.img"
 OUT_IMAGE="$OUTPUT_DIR/system.img"
 
 # the partition is 10G, but openpilot's updater didn't always handle the full size
-# Increased from 4500M to 6G for Python packages
-ROOTFS_IMAGE_SIZE=6G
+# Original size: 4500M
+ROOTFS_IMAGE_SIZE=4500M
 
 # Create temp dir if non-existent
 mkdir -p "$BUILD_DIR" "$OUTPUT_DIR" "$DOWNLOADS_DIR"
@@ -125,6 +125,36 @@ exec_as_root sh -c "
 
   # Write build info
   printf '%s\n%s\n' '$GIT_HASH' '$DATETIME' > BUILD
+"
+
+# OnePlus 6 specific configuration
+echo "Applying OnePlus 6 specific configuration"
+exec_as_root sh -c "
+  set -e
+  cd '$ROOTFS_DIR'
+
+  # Use OnePlus 6 specific fstab if available
+  if [ -f etc/fstab.oneplus6 ]; then
+    cp etc/fstab.oneplus6 etc/fstab
+  fi
+
+  # Enable OnePlus 6 specific services
+  if [ -d etc/sv/brightnessd-oneplus6 ]; then
+    ln -sf /etc/sv/brightnessd-oneplus6 etc/runit/runsvdir/default/
+  fi
+
+  # Ensure bootmac script permissions
+  if [ -f usr/local/sbin/bootmac-wrapper ]; then
+    chmod +x usr/local/sbin/bootmac-wrapper
+  fi
+
+  # Ensure MAC address config file exists
+  if [ ! -d usr/lib/firmware/wlan/qca_cld ]; then
+    mkdir -p usr/lib/firmware/wlan/qca_cld
+  fi
+  if [ ! -f usr/lib/firmware/wlan/qca_cld/oneplus6_wlan_mac.ini ]; then
+    echo 'MAC=00:11:22:33:44:55' > usr/lib/firmware/wlan/qca_cld/oneplus6_wlan_mac.ini
+  fi
 "
 
 # Profile rootfs (before unmount)

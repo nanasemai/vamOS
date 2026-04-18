@@ -257,10 +257,165 @@ vamOS 通过以下方式控制设备：
 
 ---
 
+## 引导启动机制（无 initrd/ramdisk）
+
+### 传统 Linux 引导 vs vamOS
+
+| 特性 | 传统 Linux | vamOS |
+|------|-----------|-------|
+| 引导阶段 | Bootloader → Kernel → initrd → rootfs | Bootloader → Kernel → rootfs |
+| initrd 作用 | 临时根文件系统，加载驱动后挂载真实根文件系统 | **不需要**，内核直接挂载真实根文件系统 |
+| 根文件系统 | 需要先通过 initrd 加载存储驱动 | 存储驱动编译进内核，直接挂载 |
+
+### 引导流程图
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         设备开机                                     │
+│                              │                                      │
+│                              ▼                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │ Bootloader (ABL / fastboot)                                  │  │
+│  │  - 加载 boot.img 到内存                                       │  │
+│  │  - 包含: Kernel (Image.gz-dtb) + cmdline                      │  │
+│  └──────────────────────────┬───────────────────────────────────┘  │
+│                             │                                      │
+│                             ▼                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │ Linux 内核启动                                                │  │
+│  │                                                               │  │
+│  │  1. 解压内核镜像 (Image.gz)                                   │  │
+│  │  2. 解析设备树 (DTB)                                          │  │
+│  │  3. 解析 cmdline 参数                                         │  │
+│  │  4. 初始化硬件驱动 (UFS、存储、显示等)                          │  │
+│  │  5. 直接挂载 root=/dev/block/bootdevice/by-name/system        │  │
+│  └──────────────────────────┬───────────────────────────────────┘  │
+│                             │                                      │
+│                             ▼                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │ 挂载 system 分区 (ext4/erofs)                                 │  │
+│  │  - 包含完整的 rootfs 文件系统                                  │  │
+│  │  - 包含 /sbin/init (runit init)                               │  │
+│  └──────────────────────────┬───────────────────────────────────┘  │
+│                             │                                      │
+│                             ▼                                      │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │ 执行 /sbin/init                                              │  │
+│  │  - runit init 系统启动                                        │  │
+│  │  - 运行系统服务                                               │  │
+│  │  - 启动 openpilot                                            │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 为什么不需要 initrd/ramdisk？
+
+#### 1. **驱动编译进内核（而非模块）**
+
+传统 Linux 使用 initrd 的原因：
+- 存储驱动（如 UFS、SATA）是**可加载模块**
+- 需要先加载驱动才能访问根文件系统
+- initrd 是一个临时的小型文件系统，包含驱动模块
+
+vamOS 的解决方案：
+- **所有必要驱动直接编译进内核**（`CONFIG_* =y`，而非 `=m`）
+- 内核启动时自动初始化所有硬件
+- 无需中间层即可访问存储设备
+
+#### 2. **boot.img 构建方式**
+
+从 [build_kernel_oneplus6.sh](file:///home/ubuntu/openpilot_oneplus/vamOS/tools/build/build_kernel_oneplus6.sh#L180-L189) 可以看到：
+
+```bash
+$TOOLS/mkbootimg \
+  --kernel Image.gz-dtb \          # 内核镜像 + 设备树
+  --ramdisk /dev/null \            # ← 关键：使用 /dev/null 作为空 ramdisk
+  --cmdline "console=ttyMSM0,115200n8 ... root=/dev/block/bootdevice/by-name/system rootwait ro" \
+  --pagesize 4096 \
+  --base 0x80000000 \
+  --kernel_offset 0x8000 \
+  --ramdisk_offset 0x8000 \
+  --tags_offset 0x100 \
+  --output $BOOT_IMG.nonsecure
+```
+
+**关键点：**
+- `--ramdisk /dev/null`：指定空 ramdisk（即没有 initrd）
+- `root=/dev/block/bootdevice/by-name/system`：内核直接挂载 system 分区作为根文件系统
+- `rootwait`：等待设备就绪后再挂载
+- `ro`：只读挂载根文件系统
+
+#### 3. **内核 cmdline 参数详解**
+
+**comma 设备 (mici/tizi)：**
+```
+console=ttyMSM0,115200n8           # 串口控制台
+earlycon=msm_geni_serial,0xA84000  # 早期串口控制台
+androidboot.hardware=qcom          # Android 硬件标识
+androidboot.console=ttyMSM0        # Android 控制台
+ehci-hcd.park=3                    # USB 主机控制器优化
+lpm_levels.sleep_disabled=1        # 低功耗模式优化
+service_locator.enable=1           # 服务定位器
+androidboot.selinux=permissive     # SELinux 宽松模式
+firmware_class.path=/lib/firmware/updates  # 固件路径
+net.ifnames=0                      # 使用传统网络接口命名
+```
+
+**一加6 设备（额外参数）：**
+```
+root=/dev/block/bootdevice/by-name/system  # ← 关键：直接指定根文件系统
+rootwait                                    # 等待设备就绪
+ro                                          # 只读挂载
+```
+
+#### 4. **存储设备路径**
+
+| 设备 | 根文件系统路径 | 说明 |
+|------|--------------|------|
+| comma 3X/4 | `/dev/block/bootdevice/by-name/system` | UFS 存储的 system 分区 |
+| 一加6/6T | 同上 | 通过 fastboot 刷机 |
+
+`/dev/block/bootdevice/by-name/` 是由内核 UFS 驱动创建的符号链接：
+- `bootdevice` → UFS 控制器设备
+- `by-name/system` → 名为 "system" 的分区
+
+#### 5. **与传统 Android 的对比**
+
+| 特性 | Android | vamOS |
+|------|---------|-------|
+| boot.img 内容 | kernel + ramdisk(boot.img) | kernel + **空 ramdisk** |
+| 根文件系统位置 | ramdisk 中 /init 挂载 /system | 内核直接挂载 |
+| init 进程 | /init (Android init) | /sbin/init (runit) |
+| 启动速度 | 慢（需要 initrd 过渡） | 快（直接挂载） |
+
+### 优势
+
+1. **启动速度更快**
+   - 省去 initrd 解压和执行阶段
+   - 减少启动步骤
+
+2. **更简单的设计**
+   - 无需维护 initrd 镜像
+   - 无需编写 initramfs 脚本
+
+3. **更可靠**
+   - 减少中间环节，降低故障点
+   - 驱动在内核中，不会出现驱动加载失败
+
+### 前提条件
+
+这种引导方式需要满足：
+1. **存储驱动必须编译进内核**（不能是模块）
+2. **文件系统驱动必须编译进内核**（ext4、erofs 等）
+3. **设备树必须包含存储控制器配置**
+
+---
+
 ## 关键特性
 
 ### 1. 极速启动
 - 去掉 Android 繁重的启动流程
+- 去掉 initrd 过渡阶段
 - 目标启动时间 < 5 秒
 
 ### 2. 精简设计

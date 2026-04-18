@@ -1,0 +1,64 @@
+#!/bin/bash
+set -euo pipefail
+
+TYPE="${1:-all}"
+BOOTMAC_DIR="/var/lib/bootmac"
+WLAN_IF="wlan0"
+BT_IF="hci0"
+
+mkdir -p "${BOOTMAC_DIR}"
+chmod 755 "${BOOTMAC_DIR}"
+
+generate_and_store_mac() {
+  local file="$1"
+  local macvar="$2"
+  if [ -n "${!macvar}" ]; then
+    echo "${!macvar}" > "$file"
+    return 0
+  fi
+  if [ -f "$file" ]; then
+    return 0
+  fi
+  local mac
+  mac=$(printf '02:%02x:%02x:%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))
+  echo "$mac" > "$file"
+}
+
+write_sys_iface_mac() {
+  local iface="$1"
+  local mac="$2"
+  if ip link show "$iface" >/dev/null 2>&1; then
+    ip link set dev "$iface" down || true
+    ip link set dev "$iface" address "$mac" || true
+    ip link set dev "$iface" up || true
+    return 0
+  fi
+  return 1
+}
+
+if [ "$TYPE" = "wlan" ] || [ "$TYPE" = "all" ]; then
+  generate_and_store_mac "${BOOTMAC_DIR}/${WLAN_IF}.mac" MAC_WLAN
+fi
+if [ "$TYPE" = "bt" ] || [ "$TYPE" = "all" ]; then
+  generate_and_store_mac "${BOOTMAC_DIR}/${BT_IF}.mac" MAC_BT
+fi
+
+if [ "$TYPE" = "wlan" ] || [ "$TYPE" = "all" ]; then
+  MAC=$(cat "${BOOTMAC_DIR}/${WLAN_IF}.mac")
+  write_sys_iface_mac "${WLAN_IF}" "$MAC" || true
+fi
+if [ "$TYPE" = "bt" ] || [ "$TYPE" = "all" ]; then
+  MAC=$(cat "${BOOTMAC_DIR}/${BT_IF}.mac")
+  if command -v hciconfig >/dev/null 2>&1 && hciconfig "${BT_IF}" >/dev/null 2>&1; then
+    hciconfig "${BT_IF}" down || true
+    if [ -x /usr/bin/bdaddr ] ; then
+      /usr/bin/bdaddr -i "${BT_IF}" "${MAC}" || true
+    fi
+    if [ -w "/sys/class/bluetooth/${BT_IF}/address" ]; then
+      echo "${MAC}" > "/sys/class/bluetooth/${BT_IF}/address" || true
+    fi
+    hciconfig "${BT_IF}" up || true
+  fi
+fi
+
+exit 0
