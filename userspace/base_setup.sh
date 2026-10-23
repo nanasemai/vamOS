@@ -4,10 +4,16 @@ set -e
 USERNAME=comma
 PASSWD=comma
 
-# Create identification files
-touch /TICI
-# TODO: rename once openpilot supports
-touch /AGNOS
+# Create identification files.
+#
+# openpilot 的 system/hardware/__init__.py 判定顺序是 TICI -> PC：
+#   TICI  = os.path.isfile('/TICI')   # Comma 硬件（panda 走 CAN）
+#   PC    = not TICI                  # 桌面/QEMU 模式
+#   ONEPLUS6 = os.path.isfile('/ONEPLUS6')
+# 一加6 上必须只留 /ONEPLUS6 —— 留 /TICI 会让 openpilot 认为自己是台 Comma
+# 设备，然后去找 panda 的 CAN 总线（一加6 根本没有 panda 的 usb-can 口），
+# manage_athenad / loggerd 这些 TICI-only 服务也会起来。
+touch /ONEPLUS6
 
 mkdir -p /etc/xbps.d
 cp /usr/share/xbps.d/*-repository-*.conf /etc/xbps.d/
@@ -131,10 +137,15 @@ echo "comma - nice -10" >> /etc/security/limits.conf
 echo "en_US.UTF-8 UTF-8" >> /etc/default/libc-locales
 xbps-reconfigure -f glibc-locales
 
-# Create dirs
-mkdir -p /data /persist /config /system
+# Create dirs.
+#
+# 注意：**不创建 /persist**。设备上一加6 的 stock GPT 有 persist 分区，
+# /etc/runit/1 会用 partlabel 把它挂到 /persist 上（挂上之后这个目录本身
+# 就不可见了，建不建都一样）。但 PC / 容器模式下没有那个分区，若目录真
+# 存在，openpilot 的 Python 与 C++ 两套 persist 都会解析到 /persist，和
+# ~/.comma/persist 撞车 —— 所以这里刻意不建。
+mkdir -p /data /config /system
 chown $USERNAME:$USERNAME /data
-chown $USERNAME:$USERNAME /persist
 chown root:root /config
 
 # Nopasswd sudo for wheel group (Void uses wheel, not sudo group)

@@ -1,0 +1,45 @@
+diff --git a/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi b/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi
+index b77a096b600e..de1894ef430d 100644
+--- a/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi
+@@ -919,6 +919,15 @@ pinconf {
+ 
+ &pmi8998_charger {
+ 	status = "okay";
++
++	/*
++	 * SMB2 integrated boost, driven by the Type-C port as vbus-supply.
++	 * The driver only registers this regulator when this child node is
++	 * present.
++	 */
++	regulator_otg: regulator-otg {
++		regulator-name = "smb2_otg_vbus";
++	};
+ };
+ 
+ &pmi8998_typec {
+@@ -930,15 +939,19 @@ connector {
+ 		compatible = "usb-c-connector";
+ 
+ 		/*
+-		 * Sink only for now, as the PMI8998 charger doesn't provide
+-		 * the VBUS output yet. Switch to the dual power role with
+-		 * source PDOs, try-power-role and vbus-supply once it is
+-		 * supported.
++		 * The SMB2 provides the VBUS boost, so the port can act as
++		 * both a sink (charger) and a source (OTG peripherals).
++		 * Prefer the source role so an OTG adapter is powered
++		 * without needing PD data role swap from the other side.
+ 		 */
+-		power-role = "sink";
++		power-role = "dual";
++		try-power-role = "source";
+ 		data-role = "dual";
+ 		self-powered;
+ 
++		vbus-supply = <&regulator_otg>;
++
++		source-pdos = <PDO_FIXED(5000, 1500, PDO_FIXED_USB_COMM)>;
+ 		sink-pdos = <PDO_FIXED(5000, 3000,
+ 				       PDO_FIXED_USB_COMM |
+ 				       PDO_FIXED_DATA_SWAP)>;

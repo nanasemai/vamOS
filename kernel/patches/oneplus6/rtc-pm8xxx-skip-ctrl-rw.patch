@@ -1,0 +1,110 @@
+rtc: pm8xxx: stop toggling CTRL when the PMIC arbiter refuses it
+
+On the OnePlus 6 (PMI8998) the pmic@0 RTC sits behind the PMIC arbiter
+(spmi-pmic-arb), and the arbiter marks the RTC CTRL register (0x6046) as
+owned by a different executive environment. Every write to it returns
+-EPERM and logs, from drivers/spmi/spmi-pmic-arb.c:
+
+    spmi spmi-0: disallowed SPMI write to sid=0, addr=0x6046
+
+at dev_err level.
+
+__pm8xxx_rtc_set_time() toggles that register twice (disable before
+writing the time bytes, enable afterwards), and the first toggle is the
+one that fails, so every RTC_SET_TIME emits a warning and bails out
+before the time is ever written.
+
+On a real device that is a steady ~30 lines per second (~2.7M lines and
+several hundred MB of journal per day), which fills a 6.7G userdata
+partition in a couple of days, while the RTC itself stays stuck at its
+power-on value (1973-08-13).
+
+Treat -EPERM from the CTRL write as a hardware property rather than a
+transient failure: remember that the register is not writable by this
+EE, stop toggling it, and let the time bytes go straight to the
+write/read block, which the arbiter does allow.
+
+The refusal is reported once at dev_warn instead of dev_err per write.
+
+Base: sdm845-next v7.2.0 @ 360b5158b5c
+diff --git a/drivers/rtc/rtc-pm8xxx.c b/drivers/rtc/rtc-pm8xxx.c
+index e624f848c..a11db64b2 100644
+--- a/drivers/rtc/rtc-pm8xxx.c
++++ b/drivers/rtc/rtc-pm8xxx.c
+@@ -79,6 +79,7 @@ struct pm8xxx_rtc {
+ 	struct nvmem_cell *nvmem_cell;
+ 	u32 offset;
+ 	bool offset_dirty;
++	bool ctrl_rw_disabled;
+ };
+ 
+ #ifdef CONFIG_EFI
+@@ -282,6 +283,25 @@ static int pm8xxx_rtc_update_offset(struct pm8xxx_rtc *rtc_dd, u32 secs)
+ 	return 0;
+ }
+ 
++static int pm8xxx_rtc_enable_ctrl(struct pm8xxx_rtc *rtc_dd, bool enable)
++{
++	const struct pm8xxx_rtc_regs *regs = rtc_dd->regs;
++	int rc;
++
++	if (rtc_dd->ctrl_rw_disabled)
++		return 0;
++
++	rc = regmap_update_bits(rtc_dd->regmap, regs->ctrl, PM8xxx_RTC_ENABLE,
++				enable ? PM8xxx_RTC_ENABLE : 0);
++	if (rc == -EPERM) {
++		rtc_dd->ctrl_rw_disabled = true;
++		dev_warn(rtc_dd->dev, "RTC CTRL 0x%x not writable by this EE, ignoring\n",
++			 regs->ctrl);
++		return 0;
++	}
++	return rc;
++}
++
+ /*
+  * Steps to write the RTC registers.
+  * 1. Disable alarm if enabled.
+@@ -306,7 +326,7 @@ static int __pm8xxx_rtc_set_time(struct pm8xxx_rtc *rtc_dd, u32 secs)
+ 		return rc;
+ 
+ 	/* Disable RTC */
+-	rc = regmap_update_bits(rtc_dd->regmap, regs->ctrl, PM8xxx_RTC_ENABLE, 0);
++	rc = pm8xxx_rtc_enable_ctrl(rtc_dd, false);
+ 	if (rc)
+ 		return rc;
+ 
+@@ -327,8 +347,7 @@ static int __pm8xxx_rtc_set_time(struct pm8xxx_rtc *rtc_dd, u32 secs)
+ 		return rc;
+ 
+ 	/* Enable RTC */
+-	rc = regmap_update_bits(rtc_dd->regmap, regs->ctrl, PM8xxx_RTC_ENABLE,
+-				PM8xxx_RTC_ENABLE);
++	rc = pm8xxx_rtc_enable_ctrl(rtc_dd, true);
+ 	if (rc)
+ 		return rc;
+ 
+@@ -504,14 +523,6 @@ static irqreturn_t pm8xxx_alarm_trigger(int irq, void *dev_id)
+ 	return IRQ_HANDLED;
+ }
+ 
+-static int pm8xxx_rtc_enable(struct pm8xxx_rtc *rtc_dd)
+-{
+-	const struct pm8xxx_rtc_regs *regs = rtc_dd->regs;
+-
+-	return regmap_update_bits(rtc_dd->regmap, regs->ctrl, PM8xxx_RTC_ENABLE,
+-				  PM8xxx_RTC_ENABLE);
+-}
+-
+ static const struct pm8xxx_rtc_regs pm8921_regs = {
+ 	.ctrl		= 0x11d,
+ 	.write		= 0x11f,
+@@ -627,7 +638,7 @@ static int pm8xxx_rtc_probe(struct platform_device *pdev)
+ 			return rc;
+ 	}
+ 
+-	rc = pm8xxx_rtc_enable(rtc_dd);
++	rc = pm8xxx_rtc_enable_ctrl(rtc_dd, true);
+ 	if (rc)
+ 		return rc;
+ 

@@ -1,0 +1,15 @@
+diff --git a/arch/arm64/boot/dts/qcom/sdm845-wcd9340.dtsi b/arch/arm64/boot/dts/qcom/sdm845-wcd9340.dtsi
+index 6172cd153..2b85fdae4 100644
+--- a/arch/arm64/boot/dts/qcom/sdm845-wcd9340.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm845-wcd9340.dtsi
+@@ -43,6 +43,10 @@ wcd9340: codec@1,0 {
+ 			qcom,micbias2-microvolt = <1800000>;
+ 			qcom,micbias3-microvolt = <1800000>;
+ 			qcom,micbias4-microvolt = <1800000>;
++			qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000
++								 500000 500000 500000 500000>;
++			qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
++			qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
+ 
+ 			#address-cells = <1>;
+ 			#size-cells = <1>;

@@ -1,0 +1,23 @@
+diff --git a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+index 27cac8539..9fafa9374 100644
+--- a/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
++++ b/drivers/gpu/drm/msm/adreno/a6xx_gmu.c
+@@ -219,10 +219,17 @@ void a6xx_gmu_set_freq(struct msm_gpu *gpu, struct dev_pm_opp *opp,
+ 		return;
+ 
+ 	if (!gmu->legacy) {
+-		a6xx_hfi_set_freq(gmu, perf_index, bw_index);
++		/*
++		 * Vote the OPP (and thus the GFX rail level) before telling the
++		 * GMU to raise the clock. The opposite order leaves a window
++		 * where the GX clock runs at the new frequency with the old
++		 * voltage, which is fatal on a630 (SDM845) where the rail is
++		 * only raised by this OPP vote.
++		 */
+ 		/* With Bandwidth voting, we now vote for all resources, so skip OPP set */
+ 		if (!bw_index)
+ 			dev_pm_opp_set_opp(&gpu->pdev->dev, opp);
++		a6xx_hfi_set_freq(gmu, perf_index, bw_index);
+ 		return;
+ 	}
+ 

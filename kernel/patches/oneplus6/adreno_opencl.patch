@@ -1,0 +1,96 @@
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_gpu.c b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+index 66f80f2d1..b0042603c 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_gpu.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_gpu.c
+@@ -381,14 +381,49 @@ int adreno_get_param(struct msm_gpu *gpu, struct msm_context *ctx,
+ 		else
+ 			*value = 0x100000;
+ 		return 0;
+-	case MSM_PARAM_CHIP_ID:
+-		*value = adreno_gpu->chip_id;
++	case MSM_PARAM_CHIP_ID: {
++		uint32_t raw_id = adreno_gpu->chip_id;
++
++		if ((raw_id & 0xFFFF0000) == 0x06030000) {
++			*value = 0x06030001;
++		} else if ((raw_id & 0xFFFF0000) == 0x06040000) {
++			*value = 0x06040001;
++		} else if ((raw_id & 0xFFFF0000) == 0x06050000) {
++			*value = 0x06050002;
++		} else if ((raw_id & 0xFFFFFF00) == 0x06060000) {
++			*value = 0x06060001;
++		} else if (raw_id == 0x06060301) {
++			*value = 0x06060201;
++		} else {
++			*value = raw_id;
++		}
++
+ 		if (!adreno_gpu->info->revn)
+ 			*value |= ((uint64_t) adreno_gpu->speedbin) << 32;
+ 		return 0;
+-	case MSM_PARAM_MAX_FREQ:
++	}
++	case MSM_PARAM_MAX_FREQ: {
+ 		*value = adreno_gpu->base.fast_rate;
++		if (*value < 1000000) {
++			uint32_t chip_id = adreno_gpu->chip_id;
++			uint64_t spoof_freq;
++
++			if ((chip_id & 0xFFFF0000) == 0x06030000) {
++				spoof_freq = 710000000;
++			} else if ((chip_id & 0xFFFF0000) == 0x06040000) {
++				spoof_freq = 585000000;
++			} else if ((chip_id & 0xFFFF0000) == 0x06050000) {
++				spoof_freq = 587000000;
++			} else if ((chip_id & 0xFFFFFF00) == 0x06060000) {
++				spoof_freq = 840000000;
++			} else {
++				spoof_freq = 800000000;
++			}
++
++			*value = spoof_freq;
++		}
+ 		return 0;
++	}
+ 	case MSM_PARAM_TIMESTAMP:
+ 		if (adreno_gpu->funcs->get_timestamp) {
+ 			pm_runtime_get_sync(&gpu->pdev->dev);
+@@ -399,7 +434,7 @@ int adreno_get_param(struct msm_gpu *gpu, struct msm_context *ctx,
+ 		}
+ 		return -EINVAL;
+ 	case MSM_PARAM_PRIORITIES:
+-		*value = gpu->nr_rings * NR_SCHED_PRIORITIES;
++		*value = 2;
+ 		return 0;
+ 	case MSM_PARAM_PP_PGTABLE:
+ 		*value = 0;
+diff --git a/drivers/gpu/drm/msm/msm_submitqueue.c b/drivers/gpu/drm/msm/msm_submitqueue.c
+index 2598d674a..e91fd9f3f 100644
+--- a/drivers/gpu/drm/msm/msm_submitqueue.c
++++ b/drivers/gpu/drm/msm/msm_submitqueue.c
+@@ -183,6 +183,25 @@ int msm_submitqueue_create(struct drm_device *drm, struct msm_context *ctx,
+ 	if (!priv->gpu)
+ 		return -ENODEV;
+ 
++	/* OpenCL priority adjustment for A630 family.
++	 * Identify A630 via MSM_PARAM_CHIP_ID instead of including
++	 * adreno_gpu.h (which would pull in generated adreno_common.xml.h
++	 * and break parallel builds where msm_submitqueue.c is compiled
++	 * before adreno source files generate the XML headers). */
++	if (priv->gpu && priv->gpu->funcs->get_param) {
++		uint64_t chip_id = 0;
++		uint32_t len = 0;
++
++		if (priv->gpu->funcs->get_param(priv->gpu, NULL,
++				MSM_PARAM_CHIP_ID, &chip_id, &len) == 0 &&
++		    (chip_id >> 16) == 0x0603) {
++			if (prio == 1)
++				prio = 0;
++			else if (prio >= 2)
++				prio = (prio - 2) % priv->gpu->nr_rings;
++		}
++	}
++
+ 	if (flags & MSM_SUBMITQUEUE_VM_BIND) {
+ 		unsigned sz;
+ 

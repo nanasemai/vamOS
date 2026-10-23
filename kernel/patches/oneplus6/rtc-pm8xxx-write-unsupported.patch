@@ -1,0 +1,49 @@
+--- a/drivers/rtc/rtc-pm8xxx.c
++++ b/drivers/rtc/rtc-pm8xxx.c
+@@ -66,6 +66,7 @@
+  * @nvmem_cell:		nvmem cell for offset
+  * @offset:		offset from epoch in seconds
+  * @offset_dirty:	offset needs to be stored on shutdown
++ * @write_unsupported:	PMIC arbiter refuses time register writes for this EE
+  */
+ struct pm8xxx_rtc {
+ 	struct rtc_device *rtc;
+@@ -80,6 +81,7 @@
+ 	u32 offset;
+ 	bool offset_dirty;
+ 	bool ctrl_rw_disabled;
++	bool write_unsupported;
+ };
+ 
+ #ifdef CONFIG_EFI
+@@ -367,6 +369,17 @@
+ 	u32 secs;
+ 	int rc;
+ 
++	/*
++	 * Returning -ENODEV (not -EPERM) matters: the NTP code treats
++	 * -ENODEV from rtc_set_time() as "this RTC cannot hold the time"
++	 * and stops rescheduling sync_hw_clock(), while any other error
++	 * makes it retry every ~1s forever.  That retry loop is what
++	 * produced the steady "disallowed SPMI write to sid=0,
++	 * addr=0x6040" flood once the CTRL register was skipped.
++	 */
++	if (rtc_dd->write_unsupported)
++		return -ENODEV;
++
+ 	secs = rtc_tm_to_time64(tm);
+ 
+ 	if (rtc_dd->allow_set_time)
+@@ -374,6 +387,12 @@
+ 	else
+ 		rc = pm8xxx_rtc_update_offset(rtc_dd, secs);
+ 
++	if (rc == -EPERM) {
++		rtc_dd->write_unsupported = true;
++		dev_warn(dev, "RTC time registers not writable by this EE, disabling time updates\n");
++		return -ENODEV;
++	}
++
+ 	if (rc)
+ 		return rc;
+ 

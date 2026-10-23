@@ -1,0 +1,10 @@
+--- a/arch/arm64/boot/dts/qcom/pm8998.dtsi
++++ b/arch/arm64/boot/dts/qcom/pm8998.dtsi
+@@ -106,6 +106,7 @@
+ 			reg = <0x6000>, <0x6100>;
+ 			reg-names = "rtc", "alarm";
+ 			interrupts = <0x0 0x61 0x1 IRQ_TYPE_EDGE_RISING>;
++			allow-set-time;
+ 		};
+ 
+ 		pm8998_gpios: gpio@c000 {

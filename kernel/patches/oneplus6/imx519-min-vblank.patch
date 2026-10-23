@@ -1,0 +1,31 @@
+diff --git a/drivers/media/i2c/imx519.c b/drivers/media/i2c/imx519.c
+index 4834d687a4b3..8c179c38562f 100644
+--- a/drivers/media/i2c/imx519.c
++++ b/drivers/media/i2c/imx519.c
+@@ -118,6 +118,9 @@
+ 
+ #define IMX519_FRAME_LENGTH_MAX		0xffdc
+ 
++/* 垂直消隐下限（行）：厂商寄存器表里 1080p/720p/4K 模式的 VTS 都是帧高+100 */
++#define IMX519_MIN_VBLANK		100
++
+ /* Long exposure multiplier */
+ #define IMX519_LONG_EXP_SHIFT_MAX	7
+ #define IMX519_LONG_EXP_SHIFT_REG	CCI_REG8(0x3100)
+@@ -1305,7 +1308,15 @@ unsigned int imx519_get_frame_length(const struct imx519 *imx519,
+ 	if (WARN_ON(frame_length > IMX519_FRAME_LENGTH_MAX))
+ 		frame_length = IMX519_FRAME_LENGTH_MAX;
+ 
+-	return max_t(unsigned int, frame_length, mode->height);
++	/*
++	 * 帧长必须给垂直消隐留出空间：按 timeperframe 算出的 1080p/720p/4K 帧长
++	 * 分别是 1037/721/1989 行，比帧高还小或只多一行，clamp 到 height 后垂直
++	 * 消隐为 0/1，传感器实测只输出 height-74/75 行（CSI 缓冲尾部补零），
++	 * 软件 ISP 缩放后表现为画面底部黑边。厂商寄存器表里这几个模式的 VTS
++	 * 都是帧高+100，按同一口径兜底。
++	 */
++	return max_t(unsigned int, frame_length,
++		     mode->height + IMX519_MIN_VBLANK);
+ }
+ 
+ static void imx519_set_framing_limits(struct imx519 *imx519)

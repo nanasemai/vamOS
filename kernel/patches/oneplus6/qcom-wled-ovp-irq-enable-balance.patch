@@ -1,0 +1,87 @@
+diff --git a/drivers/video/backlight/qcom-wled.c b/drivers/video/backlight/qcom-wled.c
+index 650dd95f06ef..e40c00cb6cd7 100644
+--- a/drivers/video/backlight/qcom-wled.c
++++ b/drivers/video/backlight/qcom-wled.c
+@@ -197,6 +197,7 @@ struct wled {
+ 	bool disabled_by_short;
+ 	bool has_short_detect;
+ 	bool cabc_disabled;
++	bool ovp_irq_disabled;
+ 	int short_irq;
+ 	int ovp_irq;
+ 
+@@ -294,7 +295,19 @@ static void wled_ovp_work(struct work_struct *work)
+ {
+ 	struct wled *wled = container_of(work,
+ 					 struct wled, ovp_work.work);
++
++	/*
++	 * Only re-enable the IRQ if it is currently disabled. The disable
++	 * path can cancel this work before it runs, in which case the IRQ
++	 * was never disabled and an unconditional enable_irq() would warn
++	 * with "Unbalanced enable for IRQ" (and, worse, mask an enable
++	 * count that has drifted).
++	 */
++	if (!wled->ovp_irq_disabled)
++		return;
++
+ 	enable_irq(wled->ovp_irq);
++	wled->ovp_irq_disabled = false;
+ }
+ 
+ static int wled_module_enable(struct wled *wled, int val)
+@@ -321,8 +334,11 @@ static int wled_module_enable(struct wled *wled, int val)
+ 			 */
+ 			schedule_delayed_work(&wled->ovp_work, HZ / 100);
+ 		} else {
+-			if (!cancel_delayed_work_sync(&wled->ovp_work))
++			if (!cancel_delayed_work_sync(&wled->ovp_work) &&
++			    !wled->ovp_irq_disabled) {
+ 				disable_irq(wled->ovp_irq);
++				wled->ovp_irq_disabled = true;
++			}
+ 		}
+ 	}
+ 
+@@ -1627,7 +1643,6 @@ static int wled_configure_ovp_irq(struct wled *wled,
+ 				  struct platform_device *pdev)
+ {
+ 	int rc;
+-	u32 val;
+ 
+ 	wled->ovp_irq = platform_get_irq_byname(pdev, "ovp");
+ 	if (wled->ovp_irq < 0) {
+@@ -1643,14 +1658,15 @@ static int wled_configure_ovp_irq(struct wled *wled,
+ 		return 0;
+ 	}
+ 
+-	rc = regmap_read(wled->regmap, wled->ctrl_addr +
+-			 WLED3_CTRL_REG_MOD_EN, &val);
+-	if (rc < 0)
+-		return rc;
+-
+-	/* Keep OVP irq disabled until module is enabled */
+-	if (!(val & WLED3_CTRL_REG_MOD_EN_MASK))
+-		disable_irq(wled->ovp_irq);
++	/*
++	 * Keep OVP irq disabled until module is enabled. Do this
++	 * unconditionally: devm_request_threaded_irq() leaves the IRQ
++	 * enabled, and the MOD_EN bit may already be set by the bootloader,
++	 * so a conditional disable here makes the first enable_irq() in
++	 * wled_ovp_work() unbalanced ("Unbalanced enable for IRQ" at boot).
++	 */
++	disable_irq(wled->ovp_irq);
++	wled->ovp_irq_disabled = true;
+ 
+ 	return 0;
+ }
+@@ -1762,7 +1778,8 @@ static void wled_remove(struct platform_device *pdev)
+ 	mutex_destroy(&wled->lock);
+ 	cancel_delayed_work_sync(&wled->ovp_work);
+ 	disable_irq(wled->short_irq);
+-	disable_irq(wled->ovp_irq);
++	if (wled->ovp_irq > 0 && !wled->ovp_irq_disabled)
++		disable_irq(wled->ovp_irq);
+ }
+ 
+ static const struct of_device_id wled_match_table[] = {

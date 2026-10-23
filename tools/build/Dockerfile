@@ -77,15 +77,30 @@ RUN ln -sf /lib/firmware/ath10k/WCN3990/hw1.0/wlanmdsp.mbn /lib/firmware/qcom/sd
 # Root filesystem overlay — all userspace files at their final paths
 COPY ./userspace/root/ /
 
-# Install modules and camera headers produced with the matching boot image.
+# Install modules produced with the matching boot image.
+#
+# 原实现还校验 /usr/include/media/cam_req_mgr.h 和 spectra_camera /
+# camcc_sdm845 / venus_* 六个模块的 vermagic —— 那整段是 Comma 外挂
+# Spectra 驱动体系的产物：
+#   * cam_req_mgr.h 是 Comma 自建的 vendor 头，上游内核**没有**这个文件
+#     （上游 camss uapi 在 include/uapi/linux/media/ + linux/v4l2*.h）；
+#   * spectra_camera / camcc_sdm845 / venus_* 是 out-of-tree .ko，
+#     本分支的内核树里根本没有这些驱动；
+#   * mc / videodev 在上游是 CONFIG_MEDIA_SUPPORT 的 =y 内置驱动，
+#     不产出 .ko，modinfo 查不到。
+# 任一条都让 `test` 返回非零，Docker 层直接失败 —— 所以整段删掉。
+#
+# 现在的判据是「目录名即契约」：build_kernel_oneplus6.sh 用同一个 krel
+# 目录名写模块，build_system.sh 用同一个字符串传 KERNEL_RELEASE。
+# 只要 /lib/modules/<krel>/modules.dep 存在且 depmod 成功，模块就和
+# boot.img 里的内核同源。qrtr 抽样只是兜底（CONFIG_QRTR=m 是内核自带的
+# 纯模块，不依赖任何 SoC 私有固件路径），万一哪天上游改名它会立刻在这里
+# 报出来，不会静默放过。
 ARG KERNEL_RELEASE
 ADD ./build/kernel-rootfs.tar /
 RUN test -n "$KERNEL_RELEASE" && \
     test -s "/lib/modules/$KERNEL_RELEASE/modules.dep" && \
-    test -s /usr/include/media/cam_req_mgr.h && \
-    for module in spectra_camera mc videodev camcc_sdm845 venus_core venus_enc venus_dec; do \
-      test "$(modinfo -k "$KERNEL_RELEASE" -F vermagic "$module" | cut -d ' ' -f 1)" = "$KERNEL_RELEASE" || exit 1; \
-    done && \
+    test "$(modinfo -k "$KERNEL_RELEASE" -F vermagic qrtr 2>/dev/null | cut -d' ' -f1)" = "$KERNEL_RELEASE" && \
     depmod -a "$KERNEL_RELEASE"
 
 # Fix ownership on home directory (overlay COPY runs as root)
@@ -95,6 +110,12 @@ RUN printf '\nif [ -f ~/.bash_aliases ]; then\n    . ~/.bash_aliases\nfi\n' >> /
 RUN mkdir -p /root/.config
 
 # Enable runit services
+#
+# /etc/sv/<svc> 有的来自 userspace/root/ 覆盖层，有的来自 Void 包。
+# 原实现无脑 ln -sf：源目录不存在时会留下**悬空符号链接**，runit 起来后
+# runsvdir 每次重启都报一条错误（不致命，但日志里全是噪音，容易掩盖真问题）。
+# 现在缺的就在构建日志里明说，好让「该服务的 /etc/sv 目录漏在覆盖层里」
+# 和「包没装」这两种情况立刻可见。
 RUN for svc in \
   ipa_fws brightnessd fs_setup gpio init-qcom lte \
   avahi-ssh-publish power_monitor power_drop_monitor \
@@ -106,7 +127,11 @@ RUN for svc in \
   ssh-param-watcher ncm-param-watcher dnsmasq \
   rsyslogd nftables cnss_daemon polkitd \
   sshd agetty-ttyMSM0 agetty-ttyAMA0; do \
-    ln -sf /etc/sv/$svc /etc/runit/runsvdir/default/; \
+    if [ -d "/etc/sv/$svc" ]; then \
+      ln -sf /etc/sv/$svc /etc/runit/runsvdir/default/; \
+    else \
+      echo "WARN: /etc/sv/$svc 不存在，跳过（不生成悬空符号链接）"; \
+    fi; \
   done
 
 # Remove udevd service - we start udevd in runit stage 1, no need for service
@@ -125,8 +150,16 @@ RUN chmod +x /etc/runit/1 /etc/runit/2 /etc/runit/3
 RUN chmod +x /usr/local/sbin/poweroff && \
     ln -sf poweroff /usr/local/sbin/reboot
 
-# NetworkManager connection permissions
-RUN chmod 600 /usr/lib/NetworkManager/system-connections/*.nmconnection
+# NetworkManager connection permissions.
+# 两点必须一起处理：
+#   1. userspace/root/etc/NetworkManager/ 下只有 NetworkManager.conf 和 conf.d/，
+#      没有 system-connections/ —— 目录不建的话 chmod 的 glob 根本找不到路径。
+#   2. 即使目录建了，首次构建时一个 .nmconnection 都没有，shell glob 不匹配就
+#      原样展开成字面量 `*.nmconnection`，chmod 照样报 "cannot access"。
+# 用 find -exec 而不是 glob：零匹配时 find 是成功的空操作。
+# 目录同时是运行时 NetworkManager 写连接的落点，所以建了是必要的。
+RUN mkdir -p /usr/lib/NetworkManager/system-connections && \
+    find /usr/lib/NetworkManager/system-connections -name '*.nmconnection' -exec chmod 600 {} +
 
 # MOTD - profile.d runs update-motd.d scripts into /run/motd, pam_motd displays it
 RUN sed -i 's|motd=/etc/motd|motd=/run/motd|' /etc/pam.d/system-login
@@ -196,7 +229,10 @@ RUN usermod -p '$6$vamosdev$NmMcideymvdAilEr.m7OeTX.fnt3H4UmcgheKB39rkrmebVfvZIU
 RUN mkdir -p /var/chroot/ssh
 
 # DEBUG: Custom sshd run script - /data is mounted in runit stage 1
-RUN echo '#!/bin/sh' > /etc/sv/sshd/run && \
+# mkdir 是必需的：/etc/sv/sshd 不在 userspace/root/ 里（也没有 openssh-server
+# 包提供它），echo 重定向不会自己建目录，Docker 层会直接报 No such file。
+RUN mkdir -p /etc/sv/sshd && \
+    echo '#!/bin/sh' > /etc/sv/sshd/run && \
     echo 'exec 2>&1' >> /etc/sv/sshd/run && \
     echo '# Create ssh host keys if needed (on first boot)' >> /etc/sv/sshd/run && \
     echo 'mkdir -p /data/etc/ssh' >> /etc/sv/sshd/run && \

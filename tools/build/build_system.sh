@@ -17,19 +17,64 @@ ROOTFS_DIR="$BUILD_DIR/void-rootfs"
 ROOTFS_IMAGE="$BUILD_DIR/system.img"
 OUT_IMAGE="$OUTPUT_DIR/system.img"
 
-# The boot image and rootfs modules must come from the same kernel build.
-for artifact in boot.img kernel-rootfs.tar kernel-release kernel-source-revision kernel-artifacts.sha256; do
+# 本分支的内核产物契约（tools/build/build_kernel_oneplus6.sh）：
+#   build/kernel-rootfs.tar        模块 + 固件，进 Dockerfile 的 ADD
+#   build/kernel-release           krel 字符串，进 --build-arg KERNEL_RELEASE
+#   build/kernel-source-revision   编译时的内核子模块 HEAD
+#   build/output/<DEVICE>-boot.img boot.img（bootimg 打包步骤产出）
+#
+# 和 Comma 旧版契约的差别：
+#   * 不再要求 build/boot.img —— 路径是 build/output/<DEVICE>-boot.img，
+#     且 rootfs 和 boot 是两个独立步骤，rootfs 构建不必强制等 boot 打包完。
+#   * 不再要求 kernel-artifacts.sha256 —— 改成直接校验 tar 内容与 krel 是否自洽
+#     （下面两条），比校验一个我们自己生成的清单文件强：清单可能和 tar 一起
+#     过期，tar 内容才是真相。
+#   * kernel-source-revision 比的是**内核子模块** HEAD，不是本仓库 HEAD。
+#     旧版比本仓库 HEAD 是为了 OTA 更新器知道哪个 rootfs 配哪个 openpilot；
+#     在本分支上那个不变式没意义（本仓库每次提交都会让检查失败）。真正要
+#     防的是「子模块更新了、内核没重编，tar 里还是旧模块」。
+
+DEVICE="${DEVICE:-enchilada}"
+KERNEL_OUT_DIR="$DIR/build/out"
+
+for artifact in kernel-rootfs.tar kernel-release kernel-source-revision; do
   if [ ! -s "$OUTPUT_DIR/$artifact" ]; then
     echo "Missing kernel artifact: $OUTPUT_DIR/$artifact; run ./vamos build kernel first" >&2
     exit 1
   fi
 done
-(cd "$OUTPUT_DIR" && shasum -a 256 -c kernel-artifacts.sha256)
-if [ "$(cat "$OUTPUT_DIR/kernel-source-revision")" != "$(git -C "$DIR" rev-parse HEAD)" ]; then
-  echo "Kernel artifacts belong to a different vamOS revision; rebuild the kernel" >&2
+BOOT_IMG="$OUTPUT_DIR/output/${DEVICE}-boot.img"
+if [ ! -s "$BOOT_IMG" ]; then
+  echo "Missing boot image: $BOOT_IMG" >&2
+  echo "  构建流程: ./vamos build kernel   # 内核 + boot.img" >&2
   exit 1
 fi
+
 KERNEL_RELEASE="$(cat "$OUTPUT_DIR/kernel-release")"
+if [ -z "$KERNEL_RELEASE" ]; then
+  echo "Empty kernel release in $OUTPUT_DIR/kernel-release" >&2
+  exit 1
+fi
+
+# tar 必须真的装着这个 krel 的模块。tar 和 kernel-release 可以分开过期，
+# 这个断言把两者钉在一起。
+tar -tf "$OUTPUT_DIR/kernel-rootfs.tar" | grep -qx "lib/modules/$KERNEL_RELEASE/modules.dep" || {
+  echo "kernel-rootfs.tar has no lib/modules/$KERNEL_RELEASE/modules.dep" >&2
+  echo "  镜像和 krel 不配套（tar 是旧的，kernel-release 是新的，或反之）。重编内核。" >&2
+  exit 1
+}
+
+# 内核来源必须是子模块当前的 HEAD。
+KERNEL_HEAD="$(git -C "$DIR/kernel/linux" rev-parse HEAD 2>/dev/null || echo unknown)"
+if [ "$KERNEL_HEAD" = "unknown" ]; then
+  echo "kernel/linux submodule not initialized; run ./vamos setup" >&2
+  exit 1
+fi
+if [ "$(cat "$OUTPUT_DIR/kernel-source-revision")" != "$KERNEL_HEAD" ]; then
+  echo "Kernel artifacts built from $OUTPUT_DIR/kernel-source-revision, submodule is now $KERNEL_HEAD" >&2
+  echo "Rebuild the kernel: ./vamos build kernel" >&2
+  exit 1
+fi
 
 # the partition is 10G, but openpilot's updater didn't always handle the full size
 # Increased from 4500M to 6G for Python packages

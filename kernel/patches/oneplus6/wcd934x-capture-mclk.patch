@@ -1,0 +1,22 @@
+diff --git a/sound/soc/codecs/wcd934x.c b/sound/soc/codecs/wcd934x.c
+index caca5cc25100..52f3130b1e88 100644
+--- a/sound/soc/codecs/wcd934x.c
++++ b/sound/soc/codecs/wcd934x.c
+@@ -5743,6 +5743,17 @@ static const struct snd_soc_dapm_route wcd934x_audio_map[] = {
+ 	{"ADC3", NULL, "AMIC3"},
+ 	{"ADC4", NULL, "AMIC4_5 SEL"},
+ 
++	/*
++	 * Capture needs the codec master clock as well: without MCLK the
++	 * ADCs run without a clock and return all-zero samples.  Only the
++	 * playback path used to pull MCLK in (via the board's RX_BIAS
++	 * route), so analog capture was silent.
++	 */
++	{"ADC1", NULL, "MCLK"},
++	{"ADC2", NULL, "MCLK"},
++	{"ADC3", NULL, "MCLK"},
++	{"ADC4", NULL, "MCLK"},
++
+ 	WCD934X_IIR_INP_MUX(0),
+ 	WCD934X_IIR_INP_MUX(1),
+ 

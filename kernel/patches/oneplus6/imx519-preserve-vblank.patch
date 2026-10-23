@@ -1,0 +1,56 @@
+diff --git a/drivers/media/i2c/imx519.c b/drivers/media/i2c/imx519.c
+--- a/drivers/media/i2c/imx519.c
++++ b/drivers/media/i2c/imx519.c
+@@ -1319,7 +1319,7 @@
+ 		     mode->height + IMX519_MIN_VBLANK);
+ }
+ 
+-static void imx519_set_framing_limits(struct imx519 *imx519)
++static void imx519_set_framing_limits(struct imx519 *imx519, bool keep_vblank)
+ {
+ 	unsigned int frm_length_min, frm_length_default, hblank;
+ 	const struct imx519_mode *mode = imx519->mode;
+@@ -1339,8 +1339,19 @@
+ 					IMX519_FRAME_LENGTH_MAX) - mode->height,
+ 				 1, frm_length_default - mode->height);
+ 
+-	/* Setting this will adjust the exposure limits as well. */
+-	__v4l2_ctrl_s_ctrl(imx519->vblank, frm_length_default - mode->height);
++	/*
++	 * Setting this will adjust the exposure limits as well.
++	 *
++	 * libcamera re-applies the format on every configure() and derives the
++	 * exposure ceiling it caches (height + VBLANK - 32) from this control.
++	 * When only the same mode is re-applied, preserve a VBLANK that
++	 * userspace has set explicitly so it can raise the exposure limit (and
++	 * lower the frame rate) before configure(). __v4l2_ctrl_modify_range()
++	 * above has already clamped the current value into the new range.
++	 */
++	__v4l2_ctrl_s_ctrl(imx519->vblank,
++			   keep_vblank ? imx519->vblank->val
++				       : frm_length_default - mode->height);
+ 
+ 	/*
+ 	 * Currently PPL is fixed to the mode specified value, so hblank
+@@ -1379,9 +1390,11 @@
+ 								fmt->pad);
+ 			*framefmt = fmt->format;
+ 		} else {
++			const struct imx519_mode *old_mode = imx519->mode;
++
+ 			imx519->mode = mode;
+ 			imx519->fmt_code = fmt->format.code;
+-			imx519_set_framing_limits(imx519);
++			imx519_set_framing_limits(imx519, mode == old_mode);
+ 		}
+ 	} else {
+ 		if (fmt->which == V4L2_SUBDEV_FORMAT_TRY) {
+@@ -1817,7 +1830,7 @@
+ 	imx519->sd.ctrl_handler = ctrl_hdlr;
+ 
+ 	/* Setup exposure and frame/line length limits. */
+-	imx519_set_framing_limits(imx519);
++	imx519_set_framing_limits(imx519, false);
+ 
+ 	return 0;
+ 

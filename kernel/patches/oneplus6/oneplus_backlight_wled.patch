@@ -1,0 +1,23 @@
+diff --git a/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi b/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi
+index b77a096b6..2f610785d 100644
+--- a/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi
+@@ -980,6 +980,18 @@ led-1 {
+ 	};
+ };
+ 
++/* PMI8998 WLED backlight. The driver is built in (CONFIG_BACKLIGHT_QCOM_WLED)
++ * but the node was left disabled upstream, so no backlight device was ever
++ * created. The LED settings mirror the other PMI8998 boards in this tree.
++ */
++&pmi8998_wled {
++	qcom,current-limit-microamp = <20000>;
++	qcom,ovp-millivolt = <29600>;
++	qcom,switching-freq = <800>;
++
++	status = "okay";
++};
++
+ &pmi8998_haptics {
+ 	qcom,wave-play-rate-us = <4255>;
+ 

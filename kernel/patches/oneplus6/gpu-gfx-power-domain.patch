@@ -1,0 +1,19 @@
+diff --git a/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi b/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi
+index b77a096b6..b4d5929b8 100644
+--- a/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi
++++ b/arch/arm64/boot/dts/qcom/sdm845-oneplus-common.dtsi
+@@ -752,6 +752,14 @@ &gcc {
+ };
+ 
+ &gpu {
++	/*
++	 * Vote the SDM845 GFX RPMh level from the GPU OPP table. Without a
++	 * power domain on this node dev_pm_opp_set_opp() has nowhere to send
++	 * opp-level, so gfx.lvl (PM8005 S1 / VDD_GFX) stays at the level left
++	 * by the bootloader and a630 is unstable above 342 MHz.
++	 */
++	power-domains = <&rpmhpd SDM845_GFX>;
++
+ 	status = "okay";
+ };
+ 

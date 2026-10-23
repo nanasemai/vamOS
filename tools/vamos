@@ -27,18 +27,21 @@ case "${1:-}" in
   setup)    setup ;;
   build)
     case "${2:-}" in
-      kernel) exec "$DIR/tools/build/build_kernel.sh" ;;
       system) exec "$DIR/tools/build/build_system.sh" ;;
-      *)      echo "Usage: vamos build <kernel|system>"; exit 1 ;;
+      kernel|oneplus6)
+        # 本分支只服务一加6/6T：上游 DTS + initramfs + fastboot，
+        # 和 Comma 那套（EDL + VBLE 签名 + Spectra 外挂驱动）是两套东西。
+        # `kernel` 留作 `oneplus6` 的别名，因为文档和记忆里一直说
+        # `./vamos build kernel`。
+        "$DIR/tools/build/build_kernel_oneplus6.sh" && "$DIR/tools/build/build_bootimg_oneplus6.sh" ;;
+      *)      echo "Usage: vamos build <kernel|oneplus6|system>"; exit 1 ;;
     esac ;;
   flash)
     case "${2:-}" in
-      kernel)   exec "$DIR/tools/flash/kernel.sh" "${3:-}" ;;
-      system)   exec "$DIR/tools/flash/system.sh" ;;
-      firmware) exec "$DIR/tools/flash/firmware.sh" ;;
-      gpt)      exec "$DIR/tools/flash/gpt.sh" ;;
-      all)      "$DIR/tools/flash/gpt.sh" && "$DIR/tools/flash/firmware.sh" && "$DIR/tools/flash/kernel.sh" && "$DIR/tools/flash/system.sh" ;;
-      *)        echo "Usage: vamos flash <kernel|system|firmware|gpt|all>"; exit 1 ;;
+      oneplus6|all)
+        # fastboot 刷机，不是 EDL。`all` 保留是因为文档一直这么写。
+        exec "$DIR/tools/flash/oneplus6.sh" "${3:-}" ;;
+      *)      echo "Usage: vamos flash <oneplus6|all> [--yes]"; exit 1 ;;
     esac ;;
   profile)
     shift
@@ -49,15 +52,21 @@ case "${1:-}" in
   *)
     echo "Usage: vamos <setup|build|flash|profile|sync>"
     echo ""
+    echo "  本分支 (oneplus-mainline) 只服务一加6 (enchilada) / 一加6T (fajita)。"
+    echo "  刷机走 fastboot，不走 EDL。"
+    echo ""
     echo "  setup              Initialize submodules and udev rules"
-    echo "  build kernel       Build the kernel (output/boot.img)"
-    echo "  build system       Build the system image (output/system.img)"
-    echo "  flash kernel       Flash boot.img to device via EDL (--legacy for legacy kernel)"
-    echo "  flash system       Flash system.img to device via EDL"
-    echo "  flash firmware     Flash firmware partitions to device via EDL"
-    echo "  flash gpt          Flash GPT partition tables to device via EDL"
-    echo "  flash all          Flash gpt + firmware + kernel + system"
+    echo "  build kernel       构建内核 + 打包 boot.img（等价 build oneplus6）"
+    echo "  build oneplus6     同上，明示设备"
+    echo "  build system       Build the system image"
+    echo "  flash oneplus6     fastboot 刷机: boot_a/b, userdata, vbmeta_a/b"
+    echo "  flash all          同上"
     echo "  profile [diff]     Profile rootfs or diff two profiles"
     echo "  sync [ref]         Sync openpilot's dependency list and relock"
+    echo ""
+    echo "  设备切换: DEVICE=fajita ./vamos build kernel    # 一加6T"
+    echo "  跳过确认: ./vamos flash oneplus6 --yes"
+    echo "  WARNING: flash 会擦除 userdata（全部设备数据）。"
+    echo "           详见 docs/oneplus6-retarget-plan-2026-10-23.md"
     exit 1 ;;
 esac

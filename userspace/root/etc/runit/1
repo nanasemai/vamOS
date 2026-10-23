@@ -52,16 +52,19 @@ fi
 
 # Mount /firmware early (before udev) so firmware is available when drivers load
 # The symlink /lib/firmware/updates -> /firmware/image requires /firmware to be mounted
+#
+# 用 partlabel 而不是 /dev/sde4：sde4 是 Comma 设备的 UFS LUN 编号，一加6 上
+# 同一块 modem 分区落在别的节点上，硬编码 LUN 只会静默跳过。
 echo "=> Mounting /firmware early for driver firmware..."
 n=0
-while [ ! -b /dev/sde4 ] && [ $n -lt 50 ]; do
+while [ ! -e /dev/disk/by-partlabel/modem_a ] && [ $n -lt 50 ]; do
     sleep 0.1
     n=$((n + 1))
 done
-if [ -b /dev/sde4 ]; then
-    mount -t vfat -o ro /dev/sde4 /firmware && echo "=> /firmware mounted" || echo "WARN: /firmware mount failed"
+if [ -e /dev/disk/by-partlabel/modem_a ]; then
+    mount -t vfat -o ro /dev/disk/by-partlabel/modem_a /firmware && echo "=> /firmware mounted (modem_a)" || echo "WARN: /firmware mount failed"
 else
-    echo "WARN: /dev/sde4 not ready after 5s, will mount later"
+    echo "WARN: modem_a partition not ready after 5s, will mount later"
 fi
 echo "=> Loading kernel modules..."
 if [ -x /etc/runit/core-services/02-kmods.sh ]; then
@@ -117,9 +120,17 @@ mount_part() {
 
 echo "=> Mounting partitions..."
 # Critical partitions (with options: partlabel:mountpoint:options)
+#
+# 注意：**不再挂 userdata**。本分支（oneplus-mainline）的根文件系统本身就在
+# userdata 分区上（initramfs 把它挂到 /mnt 后 switch_root），/data 是 rootfs
+# 里的普通目录（userspace/root/data），可直接写。这里如果再把 userdata 挂到
+# /data，mount 会返回 EBUSY（同一个 superblock 已经在 / 上了）——不会砖，
+# 但每次开机一条 WARN，而且查起来会误判成"分区表有问题"。
+#
+# Comma 那套是 rootfs 在 system 分区、userdata 挂到 /data；一加6 没有
+# system 分区，两者合并了。
 # Note: /firmware (modem_a) is mounted earlier before udev
 for part in \
-    "userdata:/data:rw,noatime,nodiratime" \
     "dsp_a:/dsp:ro" \
     "persist:/persist:ro" \
     "cache:/cache:relatime,data=ordered,noauto_da_alloc,discard,noexec,nodev,nosuid" \

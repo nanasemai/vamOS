@@ -1,0 +1,120 @@
+diff --git a/drivers/power/supply/qcom_smbx.c b/drivers/power/supply/qcom_smbx.c
+index 8a58dc598982..2fae3b2ff730 100644
+--- a/drivers/power/supply/qcom_smbx.c
++++ b/drivers/power/supply/qcom_smbx.c
+@@ -20,6 +20,7 @@
+ #include <linux/of.h>
+ #include <linux/power_supply.h>
+ #include <linux/regmap.h>
++#include <linux/regulator/driver.h>
+ #include <linux/types.h>
+ #include <linux/workqueue.h>
+ 
+@@ -116,6 +117,8 @@ enum smb_generation {
+ 
+ #define SMB2_OTG_CFG					0x153
+ #define OTG_RESERVED_MASK				GENMASK(7, 6)
++#define CMD_OTG_REG					0x140
++#define OTG_EN_BIT					BIT(0)
+ #define DIS_OTG_ON_TLIM_BIT				BIT(5)
+ #define QUICKSTART_OTG_FASTROLESWAP_BIT			BIT(4)
+ #define INCREASE_DFP_TIME_BIT				BIT(3)
+@@ -473,6 +476,87 @@ struct smb_match_data {
+ 	const struct smb_init_register *init_seq;
+ };
+ 
++/*
++ * VBUS boost regulator.
++ *
++ * The SMB2 has an integrated boost converter that can supply 5V to the
++ * Type-C port when the port is acting as a source.  The boost is enabled
++ * by a single command bit; the OTG enable source was already configured
++ * for software control by smb2_init_seq.
++ *
++ * The regulator is only registered when the board describes it with a
++ * "regulator-otg" child node, and the Type-C connector references it
++ * through vbus-supply.  Boards without that node (and the SMB5 parts,
++ * whose OTG controls differ) are unaffected.
++ */
++static int smb_otg_regulator_enable(struct regulator_dev *rdev)
++{
++	struct smb_chip *chip = rdev_get_drvdata(rdev);
++
++	return regmap_update_bits(chip->regmap, chip->base + CMD_OTG_REG,
++				  OTG_EN_BIT, OTG_EN_BIT);
++}
++
++static int smb_otg_regulator_disable(struct regulator_dev *rdev)
++{
++	struct smb_chip *chip = rdev_get_drvdata(rdev);
++
++	return regmap_update_bits(chip->regmap, chip->base + CMD_OTG_REG,
++				  OTG_EN_BIT, 0);
++}
++
++static int smb_otg_regulator_is_enabled(struct regulator_dev *rdev)
++{
++	struct smb_chip *chip = rdev_get_drvdata(rdev);
++	unsigned int val;
++	int rc;
++
++	rc = regmap_read(chip->regmap, chip->base + CMD_OTG_REG, &val);
++	if (rc < 0)
++		return rc;
++
++	return !!(val & OTG_EN_BIT);
++}
++
++static const struct regulator_ops smb_otg_regulator_ops = {
++	.enable		= smb_otg_regulator_enable,
++	.disable	= smb_otg_regulator_disable,
++	.is_enabled	= smb_otg_regulator_is_enabled,
++};
++
++static const struct regulator_desc smb_otg_regulator_desc = {
++	.name		= "smb2_otg_vbus",
++	.of_match	= "regulator-otg",
++	.type		= REGULATOR_VOLTAGE,
++	.owner		= THIS_MODULE,
++	.ops		= &smb_otg_regulator_ops,
++	.fixed_uV	= 5000000,
++	.n_voltages	= 1,
++};
++
++static int smb_register_otg_regulator(struct smb_chip *chip)
++{
++	struct regulator_config config = {
++		.dev = chip->dev,
++		.driver_data = chip,
++	};
++	struct device_node *np;
++	struct regulator_dev *rdev;
++
++	np = of_get_child_by_name(chip->dev->of_node, "regulator-otg");
++	if (!np)
++		return 0;
++	of_node_put(np);
++
++	rdev = devm_regulator_register(chip->dev, &smb_otg_regulator_desc,
++				       &config);
++	if (IS_ERR(rdev))
++		return dev_err_probe(chip->dev, PTR_ERR(rdev),
++				     "failed to register OTG VBUS regulator\n");
++
++	return 0;
++}
++
+ static enum power_supply_property smb_properties[] = {
+ 	POWER_SUPPLY_PROP_MANUFACTURER,
+ 	POWER_SUPPLY_PROP_MODEL_NAME,
+@@ -1585,6 +1669,10 @@ static int smb_probe(struct platform_device *pdev)
+ 
+ 	devm_remove_action(chip->dev, smb_restore_charge_state, chip);
+ 
++	rc = smb_register_otg_regulator(chip);
++	if (rc < 0)
++		return rc;
++
+ 	platform_set_drvdata(pdev, chip);
+ 
+ 	/* Initialise charger state */
