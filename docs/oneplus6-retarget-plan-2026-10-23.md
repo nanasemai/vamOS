@@ -1441,6 +1441,33 @@ via PYTHONPATH on device"。问题不在 stub，在于**没有任何东西去填
   `userspace/initramfs/hooks/qcom-firmware` 把这些 `.mbn` 直接塞进 initramfs
   （见 §16.9 的取舍）。
 
+- **`ncm-param-watcher` 去掉强制启用 USB NCM**。原脚本第一步是
+  `echo -n 1 > /data/params/d/UsbNcmEnabled`，然后跑 `set_ncm.sh`。参数是 1
+  时 `set_ncm.sh` 走 `enable_ncm`：挂 configfs、建 `/config/usb_gadget/g1`
+  （idVendor `0x1d6b` / idProduct `0x0103`，NCM 网络适配器，`192.168.42.2/24`）、
+  然后 `echo a600000.usb > UDC` **把 SoC 的 USB 控制器绑成 gadget**。
+  那是 Comma 手机连 panda 的协议。一加6 只有**一口** USB —— 被这样绑掉之后
+  ADB、数据线、充电协议全都没了，开发调试直接没法进行。
+  原注释 `TODO: remove the force on once productionized` 说的就是这一步。
+  另外原脚本第 18 行 `exec sleep infinity` 之后的整个 inotifywait 监听循环
+  是**不可达的死代码**（`ssh-param-watcher` 没有这个问题，结构是对的），
+  所以这个"watcher"从来不 watch。现在按 `ssh-param-watcher` 的结构改成：
+  启动时跑一次（参数不存在 → 走 `disable_ncm` 做一次幂等解绑，不绑 UDC），
+  然后真正 watch 值变化。监听目标从文件换成**目录** —— 没人启用 USB NCM 时
+  openpilot 可能永远不写这个参数文件，`inotifywait` 挂在文件上会直接报错退出、
+  被 runit 反复重启刷日志。
+  参数仍然存在、脚本也没删，openpilot 真要开 NCM（连 panda）时照常生效。
+- **其余未审计的服务过了一遍**，都不需要动：
+  - `varwatch` 只是 `/var/log` 超过 70% 时 truncate 日志，无硬件依赖。
+  - `magic` 是 GPU 显示服务，`/dev/dri/card0` 有守卫、`sdm_dbg_cfg.txt` 写入
+    带 `|| true`；它 `chpst -u comma:comma:gpu:video` 要的 `gpu`/`video` 组
+    在 `base_setup.sh` 里有建（`groupadd -f gpu` + `usermod -aG ... video ...`）。
+  - `avahi-ssh-publish` 只发 mDNS 记录，model 取不到时回退成 unknown。
+  - `serial-hostname` 跑一次 `set-hostname.sh` 就 sleep。
+  - `ssh-param-watcher` 结构正确，只在 `SshEnabled=0` 时 `sv down sshd`。
+  - `bluetoothd` 等 dbus、`rfkill unblock`、设确定性 MAC，无硬件假设。
+  - `dnsmasq` 标准前台运行。
+
 ### 16.9 已知遗留：initramfs 里没有固件（DSP 自动启动必然 ENOENT）
 
 这是 §16.8 那条改动的另一半，值得单独记一笔，因为它的修法需要一次**分区大小

@@ -11,12 +11,17 @@ get_value() {
   cat "$WATCH_FILE" 2>/dev/null || echo ""
 }
 
-# Run once at startup
-# TODO: remove the force on once productionized
-echo -n 1 > $WATCH_FILE
-/usr/comma/set_ncm.sh
-exec sleep infinity
-
+# 原版在这里写 `echo -n 1 > $WATCH_FILE` 把参数强制置 1，那会**立刻**把
+# a600000.usb 绑成一个 USB gadget（idVendor 0x1d6b / idProduct 0x0103 的 NCM
+# 网络适配器，192.168.42.2/24）—— 那是 Comma 手机连 panda 的协议。
+# 一加6 只有**一口** USB，被这个绑掉之后 ADB、数据线、充电协议全都没了。
+# 原注释写着 "TODO: remove the force on once productionized"，就是这一步。
+#
+# 参数由 openpilot 的 params 引擎写，服务只在值真的变化时响应。
+#
+# 此时参数文件通常还不存在（openpilot 还没启动），set_ncm.sh 走 disable_ncm
+# 分支做一次幂等解绑；返回值不当作失败，configfs 挂不上很正常。
+/usr/comma/set_ncm.sh 2>/dev/null || true
 get_value > "$STATE_FILE"
 
 # Wait for the params directory to exist
@@ -24,11 +29,14 @@ while [ ! -d "$WATCH_DIR" ]; do
   sleep 2
 done
 
-# Watch for modifications and run script only on value changes
-exec inotifywait -m -e modify,create,delete "$WATCH_FILE" 2>/dev/null | while read -r; do
+# Watch the **directory**, not the file: 没有人启用 USB NCM 时 openpilot 可能
+# 永远不写 UsbNcmEnabled，inotifywait 挂在文件上会直接报错退出，服务被 runit
+# 反复重启刷日志。挂在目录上就不会。
+exec inotifywait -m -e modify,create,delete "$WATCH_DIR" 2>/dev/null | while read -r; do
   NEW_VALUE=$(get_value)
   LAST_VALUE=$(cat "$STATE_FILE" 2>/dev/null || echo "")
   if [ "$NEW_VALUE" != "$LAST_VALUE" ]; then
+    echo "UsbNcmEnabled: '$LAST_VALUE' -> '$NEW_VALUE'"
     /usr/comma/set_ncm.sh 2>/dev/null || true
     echo "$NEW_VALUE" > "$STATE_FILE"
   fi
