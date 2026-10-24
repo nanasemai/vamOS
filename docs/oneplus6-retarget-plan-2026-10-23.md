@@ -1415,3 +1415,64 @@ via PYTHONPATH on device"。问题不在 stub，在于**没有任何东西去填
 - **`sshd_config` 删掉 DSA HostKey 行**：OpenSSH 8.7 起 `ssh-keygen` 不再支持 DSA，
   留着每次开机一条 "unsupported key format"，而且万一哪天只剩 dsa 一个条目，
   sshd 会因 "No supported host key types" 直接退出。
+- **`adsp` / `cdsp` 服务改写成 mainline remoteproc 接口**。原来四个脚本
+  （`usr/bin/cdsp.sh`、`usr/local/qr-linux/adsp-start.sh`、`etc/initscripts/adsp.sh`）
+  打的全是 Qualcomm 下行内核的接口，在上游内核里**一个都不存在**：
+  `/sys/kernel/boot_adsp/boot`、`/sys/kernel/boot_cdsp/boot`、
+  `/sys/bus/msm_subsys/`、`/sys/module/subsystem_restart/parameters/`。
+  结果：`cdsp.sh` 每次开机打一条 "File not found!"，`adsp-start.sh` 白等 10 秒
+  `/firmware/image/adsp.mdt`（既不挂 `/firmware`，固件也是 `.mbn` 不是 `.mdt`）
+  后 exit 1。两个 DSP 从来不会被它们启动。
+  现在统一走 `/usr/bin/rproc-boot.sh <dsp> [start|stop|status]`：
+  `/sys/class/remoteproc/<name>/state` 写 `start`/`stop`/`detach`
+  （`remoteproc_sysfs.c` 的 `state_store()`），`running` 才算起来
+  （`rproc_state_string[]`）。按 `name` 文件匹配而不是硬编码 `remoteprocN` 编号。
+  另修 `etc/sv/cdsp/run` 的路径：原写 `/usr/sbin/cdsp.sh`（Comma 的 Debian 布局），
+  本分支在 `/usr/bin/cdsp.sh`，runit 每重启一次报一条 not found。
+  内核侧的事实链：`CONFIG_QCOM_Q6V5_PAS=y`，DTB `&adsp_pas`/`&cdsp_pas`
+  （compatible `qcom,sdm845-adsp-pas`/`qcom,sdm845-cdsp-pas`）的 `.auto_boot = true`，
+  `remoteproc_core.c:2348` 在 `rproc_add()` **之后**才 `rproc_trigger_auto_boot()`，
+  后者走 `request_firmware_nowait(FW_ACTION_UEVENT, GFP_KERNEL)` → 同步路径。
+  `CONFIG_FW_LOADER_USER_HELPER is not set`，且本分支 initramfs 是 1.9M 的 busybox、
+  **里面没有 `/lib/firmware`**，固件只在 rootfs 的 `/lib/firmware/qcom/sdm845/OnePlus/
+  enchilada/*.mbn`。所以 auto-boot 在 initramfs 阶段拿不到固件 —— 这个服务就是
+  switch_root 之后补的那一次启动。
+  参考项目没有 adsp/cdsp 服务，靠 `initramfs-tools` 的
+  `userspace/initramfs/hooks/qcom-firmware` 把这些 `.mbn` 直接塞进 initramfs
+  （见 §16.9 的取舍）。
+
+### 16.9 已知遗留：initramfs 里没有固件（DSP 自动启动必然 ENOENT）
+
+这是 §16.8 那条改动的另一半，值得单独记一笔，因为它的修法需要一次**分区大小
+决策**，不能随手改。
+
+**问题**：`kernel/initrd`（`nanasemai/initrd@oneplus6-initrd`）是 3 个文件
+（busybox 1.9M + 2 个脚本 + 395 个 busybox 符号链接）打包的 cpio.gz，
+没有 `/lib/firmware` 目录，也没有任何拷固件的逻辑（`init_functions.sh`
+里 `setup_firmware_path()` 只是把搜索路径加成 `/lib/firmware/postmarketos`）。
+而 `qcom_q6v5_pas` 在 probe 时就通过 `request_firmware_nowait()` 要
+`qcom/sdm845/OnePlus/enchilada/{adsp,cdsp,slpi,mba,modem,venus,wlanmdsp,
+ipa_fws}.mbn`，加起来约 **85 MB**（`modem.mbn` 单个 60 MB）。
+`CONFIG_FW_LOADER_USER_HELPER is not set`，没有用户态回退机制；
+参考项目的 `oneplus6-firmware-reprobe.sh` 也明确记过这个现象：
+"ipa / venus 驱动在 rootfs 挂载之前 probe，此时固件不可读，内核报 ENOENT
+且不重试"。
+所以 ADSP/CDSP/SLPI（modem）/venus/wlanmdsp 在 initramfs 阶段全都拿不到固件，
+§16.8 的服务只是"能救则救"。
+
+**为什么不直接塞进 initramfs**：参考项目能这么做是因为它的 rootfs 是 Ubuntu、
+initramfs 由 rootfs 自己的 `initramfs-tools` 生成，固件本来就在那里。
+本分支的 initramfs 是独立的 busybox 包，塞 85 MB 意味着 boot.img 从
+~21 MB 涨到 ~90 MB+（`.mbn` 基本已经压缩过，gzip 帮助很小），
+而 `tools/flash/oneplus6.sh` 只写 stock `boot_a`/`boot_b`、**不做任何分区
+扩容**，stock 分区放不下的话刷不进去。这个决定要连着分区策略一起改，
+不在这一轮里做。
+
+**两条可选路线（待实机确认后再定）**：
+1. **保留小 initramfs + §16.8 的补救服务**（现状）。赌的是
+   `remoteproc_add()` 里 auto_boot 失败后 `device_del()` 没被走到
+   （`request_firmware_nowait` 同步失败时 `request_firmware_failed()` 的行为
+   值得实机 `dmesg` 验证一次）。设备还在的话 `state` 写入就能救回来。
+2. **仿参考项目把固件塞进 initramfs**，同时给 `tools/flash/oneplus6.sh`
+   加 boot 分区扩容（或改 GPT）。代价是 boot.img 变大、启动变慢、
+   A/B 槽写盘时间拉长。

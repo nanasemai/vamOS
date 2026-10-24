@@ -232,6 +232,12 @@ RUN sed -i 's/FileCreateMode 0640/FileCreateMode 0644/' /etc/rsyslog.conf
 
 # Set executable permissions
 RUN chmod +x /usr/comma/comma.sh /usr/comma/get-serial.sh /usr/comma/get-bt-address.sh /usr/comma/set-bt-address.sh /usr/comma/set_ssh.sh /usr/comma/set_ncm.sh /usr/comma/fs_setup.sh /usr/bin/journalctl /etc/sv/bluetoothd/run
+# DSP 启动脚本：adsp/cdsp 服务在覆盖层里，路径散在四处（/etc/sv/*/run、
+# /etc/initscripts/、/usr/bin/、/usr/local/qr-linux/）。git 里的模式是 0775，
+# 但 COPY 之后想再确认一次 —— 这里缺一个可执行位就会静默失败。
+RUN chmod +x /usr/bin/rproc-boot.sh /usr/bin/cdsp.sh \
+    /usr/local/qr-linux/adsp-start.sh /etc/initscripts/adsp.sh \
+    /etc/sv/adsp/run /etc/sv/cdsp/run
 # core-services/ 也要可执行：/etc/runit/1 里 stage 1 会对 02-kmods.sh 做
 # `[ -x ]` 检查，权限不对就静默跳过，模块一个都不会加载。
 RUN chmod +x /etc/runit/1 /etc/runit/2 /etc/runit/3

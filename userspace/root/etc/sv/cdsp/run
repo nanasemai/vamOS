@@ -3,7 +3,10 @@
 exec 2>&1
 
 # Run the init script
-/usr/sbin/cdsp.sh
+# 注意是 /usr/bin/，不是 /usr/sbin/ —— 后者是 Comma 的 Debian 布局，本分支
+# 里 /usr/sbin/cdsp.sh 根本不存在，runit 每重启一次报一条 not found，
+# 服务永远不成功。
+/usr/bin/cdsp.sh
 
 # Stay up so runit doesn't restart
 exec sleep infinity

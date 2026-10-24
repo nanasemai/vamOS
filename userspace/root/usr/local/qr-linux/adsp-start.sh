@@ -1,67 +1,20 @@
 #!/bin/sh
-###############################################################################
+# adsp-start.sh - Audio DSP 启动（mainline remoteproc 接口）
 #
-# This script is used for administration of the Hexagon DSP
+# 原来的这份 Qualcomm 脚本做的每件事，在上游内核里都做不到：
 #
-# Copyright (c) 2012-2016 Qualcomm Technologies, Inc.
-# All Rights Reserved.
-# Confidential and Proprietary - Qualcomm Technologies, Inc.
+#   * 等 /firmware/image/adsp.mdt
+#     我们既不挂 modem 分区到 /firmware（参考项目也一样不挂），固件也全是
+#     unified .mbn 而不是 .mdt。所以它必然等满 10 秒后 "Can not find the
+#     adsp's firmware" + exit 1。
+#   * /sys/bus/msm_subsys/devices/*/name|state|keep_alive
+#     msm_subsys 是行下内核的 subsystem manager 总线，上游整个不存在。
+#   * /sys/module/subsystem_restart/parameters/enable_debug
+#     行下模块，上游不存在。
+#   * /sys/kernel/boot_adsp/boot
+#     行下 boot_<name> sysfs，上游 qcom_q6v5_pas.c 里没有这个属性。
 #
-###############################################################################
+# 真正能用的接口见 /usr/bin/rproc-boot.sh 头部的说明。
+# 留这个路径是为了 /etc/initscripts/adsp.sh 和 udev/文档里的既有引用不用改。
 
-KEEP_ALIVE=0
-subsys_name=""
-
-# Wait for adsp.mdt to show up
-count=0
-while [ ! -s /firmware/image/adsp.mdt ]; do
-  sleep 0.1
-  # wait 10s for /firmare mounted
-  count=$(( $count + 1 ))
-  if [ $count -ge 100 ]; then
-    echo "[ERROR] Can not find the adsp's firmware"
-    exit 1
-  fi
-done
-
-for subsys in `ls /sys/bus/msm_subsys/devices`; do
-  name=`cat /sys/bus/msm_subsys/devices/${subsys}/name`
-  if [ "`cat /sys/bus/msm_subsys/devices/${subsys}/name`" = "adsp" ]; then
-    subsys_name="${subsys}"
-    break
-  fi
-done
-
-if [ "$KEEP_ALIVE" = "1" ]; then
-  if [ -n "${subsys_name}" ]; then
-    sysctl -w kernel.panic=0
-    echo 1 > /sys/bus/msm_subsys/devices/${subsys_name}/keep_alive
-  else
-    echo "[ERROR] Can not keep adsp alive"
-  fi
-fi
-
-# FIXME: See ATL-3054
-echo 1 > /sys/module/subsystem_restart/parameters/enable_debug
-# Bring adsp out of reset
-echo "[INFO] Bringing adsp out of reset"
-echo 1 > /sys/kernel/boot_adsp/boot
-
-# wait boot finished
-if [ -n "${subsys_name}" ]; then
-  count=0
-  state=`cat /sys/bus/msm_subsys/devices/${subsys_name}/state`
-  while [ "${state}" != "ONLINE" ]; do
-    # wait 2s for subsys boot finished
-    count=$(( $count + 1 ))
-    if [ $count -ge 200 ]; then
-      echo "[ERROR] adsp fail to boot"
-      exit 1
-    fi
-    sleep 0.01
-    state=`cat /sys/bus/msm_subsys/devices/${subsys_name}/state`
-  done
-fi
-
-# Emit adsp
-#initctl emit adsp
+exec /usr/bin/rproc-boot.sh adsp start

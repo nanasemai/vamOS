@@ -1,33 +1,33 @@
 #!/bin/sh
 ###############################################################################
 #
-# This script is used for System V init scripts to start adsp
+# adsp - System V init wrapper for the Audio DSP
 #
-# Copyright (c) 2012-2016 Qualcomm Technologies, Inc.
-# All Rights Reserved.
-# Confidential and Proprietary - Qualcomm Technologies, Inc.
+# runit 的 /etc/sv/adsp/run 调 `adsp.sh start`。
+# 真正的动作在 /usr/bin/rproc-boot.sh（mainline remoteproc 接口）；原先写的
+# /sys/kernel/boot_adsp/boot 在上游内核里不存在 —— 见
+# /usr/local/qr-linux/adsp-start.sh 的注释。
+#
+# 注意去掉 set -e：`stop` 在 DSP 本来就没起来时返回 1 是正常情况，不该让
+# 整个脚本非零退出（runit 的 run 脚本虽然不 set -e，但 SysV 语义下 exit 0 更稳）。
 #
 ###############################################################################
 
-set -e
-
 case "$1" in
   start)
-        echo -n "Starting adsp: "
-        /usr/local/qr-linux/adsp-start.sh 
-        echo "done"
+        /usr/local/qr-linux/adsp-start.sh
+        rc=$?
+        [ $rc -eq 0 ] && echo "adsp: up" || echo "WARN: adsp 没起来 (rc=$rc)，看 dmesg"
         ;;
   stop)
-        echo -n "Stopping adsp: "
-        echo 0 > /sys/kernel/boot_adsp/boot
-        echo "done"
+        /usr/bin/rproc-boot.sh adsp stop
         ;;
   restart)
         $0 stop
         $0 start
         ;;
   *)
-        echo "Usage adsp.sh { start | stop | restart}" >&2
+        echo "Usage: $0 { start | stop | restart}" >&2
         exit 1
         ;;
 esac
