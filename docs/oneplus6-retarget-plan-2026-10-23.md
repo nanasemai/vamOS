@@ -1467,8 +1467,40 @@ via PYTHONPATH on device"。问题不在 stub，在于**没有任何东西去填
   - `ssh-param-watcher` 结构正确，只在 `SshEnabled=0` 时 `sv down sshd`。
   - `bluetoothd` 等 dbus、`rfkill unblock`、设确定性 MAC，无硬件假设。
   - `dnsmasq` 标准前台运行。
+- **关掉 NVIDIA Nouveau**（`kernel/configs/oneplus6/oneplus6_defconfig`）。
+  `CONFIG_DRM_NOUVEAU=m` 是桌面/服务器 GPU 驱动，靠 PCI 总线探测；一加6 的 DTB
+  里没有任何 NVIDIA 显示设备，SDM845 只有片内 Adreno（`CONFIG_DRM_MSM`）。
+  这 **773 个 .c** 每次白烧十几分钟，`modules_install` 还会把它们塞进
+  rootfs 的 `/lib/modules/<krel>/`，纯占空间且永远不加载。
+  连带关掉 `DRM_NOUVEAU_BACKLIGHT`/`CH7006`/`SIL164`（笔记本 eDP 桥接芯片的
+  I2C 辅助驱动）和它们的依赖 `DRM_TTM`/`DRM_TTM_HELPER` —— TTM 只有 nouveau
+  和已禁用的 radeon/amdgpu 用。
+  `DRM_EXEC`/`DRM_GPUVM` 保留：Adreno 的 `DRM_MSM_GPU_STATE`（OpenCL）要用，
+  和 nouveau 无关。
+  验证方式：把改过的 defconfig 拷进独立目录跑 `olddefconfig`，结果**零漂移**
+  （说明配置自洽，不会再被 make 自动修正）；`check_defconfig.sh` 全过
+  （127 项，必须 =y 缺 0 项）；与在编的 `.config` 逐行 diff 只有上面这几条。
+  顺带记录：这份 defconfig 不是片段而是**完整 .config**，且 build 脚本只做
+  `cp` 不做 fragment merge（注释里写明了是有意的，避免基线漂移静默降级），
+  所以改这里就是改最终配置。手写的注释（EXTRA_FIRMWARE、RTC 必须内置等）
+  是项目文档的一部分，不能拿 `olddefconfig` 的输出去覆盖 —— 它会把注释全删。
 
 ### 16.9 已知遗留：initramfs 里没有固件（DSP 自动启动必然 ENOENT）
+
+**先说清楚这不是新引入的问题，而是这个项目早就定下的设计**。
+`build_kernel_oneplus6.sh` 里已经有一段权威注释：
+
+```
+# 固件不进内核镜像：CONFIG_FIRMWARE_IN_KERNEL 在本 defconfig 里是 unset，所以
+# CONFIG_EXTRA_FIRMWARE 那串清单是**空转**的，全部走运行时 request_firmware()
+# 从 /lib/firmware 读。这也解释了为什么 initramfs 之前不 mount /firmware 也能开
+# 机 —— GPU/venus/ADSP/wlan 都要等 rootfs 挂上才有固件。
+```
+
+`CONFIG_FIRMWARE_IN_KERNEL` 确实是 unset，`EXTRA_FIRMWARE` 那条清单是空的，
+所有固件都在 `kernel/firmware/` 下、由 Dockerfile 拷进 rootfs 的
+`/lib/firmware/`。所以"probe 时固件不在"是这个架构的**既定状态**，
+本节讨论的是它的实际后果。
 
 这是 §16.8 那条改动的另一半，值得单独记一笔，因为它的修法需要一次**分区大小
 决策**，不能随手改。
