@@ -1926,19 +1926,29 @@ CONFIG_PREVENT_FIRMWARE_BUILD=y
 CONFIG_FW_LOADER=y
 CONFIG_FW_LOADER_PAGED_BUF=y
 CONFIG_FW_LOADER_SYSFS=y
-# venus.mbn 和 ipa_fws.mbn 必须在这里。同一类问题：DTB 用 firmware-name 覆盖了
-# 驱动默认路径，驱动又是内置的，probe 早于 rootfs 挂载（venus 0.63s），那时
-# /lib/firmware 还不存在 -> Direct firmware load failed with error -2。
-#   &venus  firmware-name = "qcom/sdm845/OnePlus/enchilada/venus.mbn"
-#       （sdm845-oneplus-common.dtsi:1594，覆盖默认 "qcom/venus-4.2/venus.mbn"）
-#   &ipa    firmware-name = "qcom/sdm845/OnePlus/enchilada/ipa_fws.mbn"
-#       （sdm845-oneplus-common.dtsi:831，覆盖驱动默认 "ipa_fws.mdt"，
-#        CONFIG_QCOM_IPA=y 内置；probe 日志是 "IPA driver initialized" 之后
-#        才请求固件，所以 GSI/endpoint 都初始化了，只差这一个固件）
-# 固件本体在 kernel/firmware/qcom/sdm845/OnePlus/enchilada/ 下（venus.mbn 898KB、
-# ipa_fws.mbn 33KB），build_kernel.sh 会一并拷进 rootfs 的 /lib/firmware，两条
-# 路径都齐了。FW_LOADER_COMPRESS=y 已开，内嵌体积不会照原样增长。
-CONFIG_EXTRA_FIRMWARE="qcom/a630_sqe.fw qcom/a630_gmu.bin qcom/sdm845/OnePlus/enchilada/a630_zap.mbn qcom/sdm845/OnePlus/enchilada/venus.mbn qcom/sdm845/OnePlus/enchilada/ipa_fws.mbn qca/crbtfw21.tlv qca/OnePlus/enchilada/crnv21.bin regulatory.db regulatory.db.p7s ath10k/WCN3990/hw1.0/board-2.bin ath10k/WCN3990/hw1.0/wlanmdsp.mbn"
+# EXTRA_FIRMWARE **必须留空**。
+#
+# 2026-10-24 内核构建在这里挂了 4 次，报错是：
+#   No rule to make target '/lib/firmware/qcom/a630_sqe.fw', needed by
+#   'drivers/base/firmware_loader/builtin/qcom/a630_sqe.fw.gen.o'
+# 根因是这条清单曾经对应 CONFIG_FIRMWARE_IN_KERNEL（=y 时把固件嵌进 Image.gz），
+# 但那个选项在这个内核版本里**已经不存在了** —— 全树 grep `config FIRMWARE_IN_KERNEL`
+# 无任何命中。现在 drivers/base/firmware_loader/Makefile 里是：
+#   obj-y += builtin/
+# 无条件构建，builtin/Makefile 只要有 EXTRA_FIRMWARE 就逐个去嵌。
+# 而它找的是 `<EXTRA_FIRMWARE_DIR>/<name>` = `/lib/firmware/qcom/a630_sqe.fw`，
+# 这是**构建机上的绝对路径**，构建容器里没有 —— 于是必然失败。
+# 附带后果：build_kernel_oneplus6.sh 里那条 `grep '^CONFIG_FIRMWARE_IN_KERNEL=y'`
+# 的 WARN 永远不会触发，因为选项本身没了。
+#
+# 本分支的设计本来就是运行时加载：固件在 kernel/firmware/ 下，由
+# build_kernel_oneplus6.sh 拷进 rootfs 的 /lib/firmware/，驱动 probe 时
+# request_firmware() 从那里读。要 probe 早于 rootfs 挂载导致的 ENOENT
+# （venus/ipa/GPU/ath10k 都有这个窗口），走 rootfs 里的补救路径
+# （参考项目的 oneplus6-firmware-reprobe.service 是同类思路），不靠内嵌。
+#
+# EXTRA_FIRMWARE_DIR 留着无害：EXTRA_FIRMWARE 为空时它不参与任何构建。
+CONFIG_EXTRA_FIRMWARE=""
 CONFIG_EXTRA_FIRMWARE_DIR="/lib/firmware"
 # CONFIG_FW_LOADER_USER_HELPER is not set
 CONFIG_FW_LOADER_COMPRESS=y

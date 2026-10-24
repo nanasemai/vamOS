@@ -254,6 +254,24 @@ fi
 
 echo ""
 echo "[4/7] 启动容器 ..."
+# ccache 目录必须在 docker run **之前**由我们用正确属主建好。
+# docker 对不存在的 bind mount 源目录会用 **root:root 755** 自动创建，而容器
+# 是以 -u <uid>:<gid>（非 root）跑的，于是 CCACHE_DIR 不可写。
+# ccache 拿到不可写缓存目录时不会安静退化成直调编译器，而是直接失败：
+#   ccache aarch64-none-elf-gcc: unknown assembler invoked
+#   scripts/Kconfig.include:51: Sorry, this assembler is not supported.
+# 在 syncconfig 那一步就把整个构建打断，4 次重试全死，而且这个报错跟 ccache
+# 毫无关系，看起来完全是交叉工具链坏了。之前每次构建 build/out 全清、ccache 也
+# 从来没真正写进去过，等价于每轮都冷编译 —— 十几分钟的缓存收益一直为零。
+mkdir -p "${CCACHE_DIR}"
+if [ "$(id -u)" -ne 0 ]; then
+    # 目录可能已经被上一次的 docker 用 root:root 建过，普通用户 chown 不动，
+    # 得借 sudo。没有 sudo 的话 [7/7] 的可写性检查会硬失败并给出这条命令。
+    chown "$(id -u):$(id -g)" "${CCACHE_DIR}" 2>/dev/null \
+        || sudo chown "$(id -u):$(id -g)" "${CCACHE_DIR}"
+fi
+echo "[INFO] ccache 目录: ${CCACHE_DIR} ($(stat -c '%U:%G %a' "${CCACHE_DIR}"))"
+
 CONTAINER_ID=$(sudo docker run -d \
     --network host \
     -u "$(id -u):$(id -g)" \
@@ -302,15 +320,33 @@ if [ "${FIRMWARE_COUNT_HOST}" -lt "${FIRMWARE_COUNT}" ]; then
     exit 1
 fi
 
-# 固件不进内核镜像：CONFIG_FIRMWARE_IN_KERNEL 在本 defconfig 里是 unset，所以
-# CONFIG_EXTRA_FIRMWARE 那串清单是**空转**的，全部走运行时 request_firmware()
-# 从 /lib/firmware 读。这也解释了为什么 initramfs 之前不 mount /firmware 也能开
-# 机 —— GPU/venus/ADSP/wlan 都要等 rootfs 挂上才有固件。
-FIRMKV=$(grep -c '^CONFIG_FIRMWARE_IN_KERNEL=y' "${DEFCONFIG_FILE}" || true)
-if [ "${FIRMKV}" -gt 0 ]; then
-    echo "[WARN] CONFIG_FIRMWARE_IN_KERNEL=y：固件会被嵌进 Image.gz，"
-    echo "[WARN] EXTRA_FIRMWARE 清单里的每个文件都必须真实存在于 kernel/firmware/。"
+# 固件不进内核镜像：全部走运行时 request_firmware() 从 rootfs 的 /lib/firmware
+# 读。这也解释了为什么 initramfs 不 mount /firmware 也能开机 —— GPU/venus/ADSP/
+# wlan 都要等 rootfs 挂上才有固件。
+#
+# 这里**必须**硬性断言 EXTRA_FIRMWARE 为空。这条曾经有个 grep
+# CONFIG_FIRMWARE_IN_KERNEL 的 WARN，但那个选项在这个内核版本里已经整个删掉了
+# （全树 grep `config FIRMWARE_IN_KERNEL` 无命中），WARN 永远不会触发。
+# 现在的驱动因素更硬：drivers/base/firmware_loader/Makefile 里是
+#   obj-y += builtin/
+# 无条件构建，只要 EXTRA_FIRMWARE 非空，builtin/Makefile 就会逐个去嵌，而它读
+# 的是 <EXTRA_FIRMWARE_DIR>/<name> = /lib/firmware/<name> —— **构建机上的绝对
+# 路径**，容器里没有。于是编译在 4/4 次重试后全部死在
+#   No rule to make target '/lib/firmware/qcom/a630_sqe.fw', needed by
+#   'drivers/base/firmware_loader/builtin/qcom/a630_sqe.fw.gen.o'
+# 而且这个报错出现在构建中段，看起来完全像是随机崩溃。在这里直接 fail 掉。
+EXTRA_FW=$(grep -m1 '^CONFIG_EXTRA_FIRMWARE=' "${DEFCONFIG_FILE}" 2>/dev/null || true)
+EXTRA_FW_VAL="${EXTRA_FW#CONFIG_EXTRA_FIRMWARE=\"}"
+EXTRA_FW_VAL="${EXTRA_FW_VAL%\"*}"
+if [ -n "${EXTRA_FW_VAL}" ]; then
+    echo "[ERROR] defconfig 里 CONFIG_EXTRA_FIRMWARE 非空："
+    echo "       ${EXTRA_FW_VAL}"
+    echo "[ERROR] builtin/ 是无条件构建的（CONFIG_FIRMWARE_IN_KERNEL 已不存在），"
+    echo "[ERROR] 每个固件都得是构建机上的绝对路径 /lib/firmware/<name>，容器里没有，"
+    echo "[ERROR] 编译必然失败。固件改走 rootfs /lib/firmware 的运行时加载。"
+    exit 1
 fi
+echo "[OK] CONFIG_EXTRA_FIRMWARE 为空，固件走 rootfs /lib/firmware 运行时加载"
 
 # ------------------------------------------------------------------------------
 # Step 5: .config
@@ -384,7 +420,22 @@ CCACHE_VER=$(sudo docker exec -i "$CONTAINER_ID" bash -c "command -v ccache >/de
 if [ -z "${CCACHE_VER}" ]; then
     echo "[WARN] 容器里没有 ccache，本次构建将完全冷编译"
 elif ! sudo docker exec -i "$CONTAINER_ID" bash -c "test -w ${CCACHE_DIR}" 2>/dev/null; then
-    echo "[WARN] ${CCACHE_DIR} 不可写，ccache 会退化成直调编译器（缓存无效）"
+    # 这不是性能损失，是**构建失败**。ccache 拿到不可写缓存目录时不会退化成
+    # 直调编译器，而是在 syncconfig 阶段直接断掉：
+    #   ccache aarch64-none-elf-gcc: unknown assembler invoked
+    #   scripts/Kconfig.include:51: Sorry, this assembler is not supported.
+    # 报错里一个字都没提 ccache，排查起来会先怀疑交叉工具链坏了。
+    # 而且 4 次重试每次都在同一个地方死，等于白烧一轮全量编译的时间。
+    # 典型成因：CCACHE_DIR 目录不存在，docker 为 bind mount 用 root:root 755
+    # 自动建了它，而容器跑在 -u <uid>:<gid> 下。上面 [4/7] 已显式建目录并
+    # chown，正常情况进不到这里。
+    echo "[ERROR] ${CCACHE_DIR} 在容器内不可写"
+    echo "[ERROR] 容器内属主: $(sudo docker exec -i "$CONTAINER_ID" stat -c '%U:%G %a' "${CCACHE_DIR}" 2>/dev/null || echo '路径不存在')"
+    echo "[ERROR] ccache 在这种情况下会**构建失败**（不是缓存无效），"
+    echo "[ERROR] 典型报错是 syncconfig 阶段 'unknown assembler invoked'。"
+    echo "[ERROR] 请在宿主机执行: mkdir -p ${CCACHE_DIR} && chown $(id -u):$(id -g) ${CCACHE_DIR}"
+    sudo docker container rm -f "${CONTAINER_ID}" >/dev/null 2>&1 || true
+    exit 1
 else
     echo "[INFO] ccache: ${CCACHE_VER}"
     echo "[INFO] 缓存目录: ${CCACHE_DIR} (可写)"
