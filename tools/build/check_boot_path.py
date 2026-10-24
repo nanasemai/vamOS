@@ -25,8 +25,18 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 DEFAULT_CFG = os.path.join(ROOT, "build", "out", ".config")
-BOOTIMG_SH = os.path.join(ROOT, "tools", "build", "build_bootimg.sh")
-FSTAB = os.path.join(ROOT, "userspace", "etc", "fstab")
+# 一加6 单独一个打包脚本（工具链参数和 Comma 的三个结构性不同，见脚本头）。
+# 两个都列着是为了同时支持 Comma 主板的 build_bootimg.sh —— 只留一个的话，
+# 换一个设备构建时这条检查会静默变成空操作，而 root= 写错一个字符的表现
+# 就是"卡在 fastboot"，全程零报错。
+BOOTIMG_SH_CANDIDATES = [
+    os.path.join(ROOT, "tools", "build", "build_bootimg_oneplus6.sh"),
+    os.path.join(ROOT, "tools", "build", "build_bootimg.sh"),
+]
+FSTAB_CANDIDATES = [
+    os.path.join(ROOT, "userspace", "root", "etc", "fstab"),
+    os.path.join(ROOT, "userspace", "etc", "fstab"),
+]
 
 # 必须 =y。顺序即 init 的执行顺序，不是重要性排序。
 # 注意：这棵 sdm845-next 树改过很多符号名，名字一律以 oneplus6_defconfig 为准。
@@ -146,31 +156,67 @@ def read_cfg(path):
     return cfg
 
 
-def cmd_root_device():
-    """从 build_bootimg.sh 的 CMDLINE 里取 root= 的设备名。"""
-    if not os.path.isfile(BOOTIMG_SH):
-        return None
-    # 只看不带 # 的行：脚本头部注释里也写了 CMDLINE=（回滚示例），会抢先匹配
-    txt = "\n".join(l for l in open(BOOTIMG_SH, encoding="utf-8").read().split("\n")
+def _first_existing(candidates):
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _read_noncomment(path):
+    """只读不带 # 的行：脚本头部注释里也写了 CMDLINE=（回滚示例），会抢先匹配。"""
+    txt = "\n".join(l for l in open(path, encoding="utf-8").read().split("\n")
                     if not l.lstrip().startswith("#"))
+    return txt
+
+
+def _default_of(var, txt):
+    """解析 VAR="${VAR:-/dev/sda17}" 这类间接引用，取 :- 后面的默认值。
+
+    build_bootimg_oneplus6.sh 的 CMDLINE 里写的是 root=${ROOT_DEV}，
+    ROOT_DEV 又是 "${ROOT_DEV:-/dev/sda17}"。不解析的话正则匹配不到 /dev/，
+    这条检查会静默退化成空操作。
+    """
+    m = re.search(r'^%s="\$\{%s:-([^}"]+)\}' % (var, var), txt, re.M)
+    return m.group(1) if m else None
+
+
+def cmd_root_device():
+    """从 bootimg 打包脚本的 CMDLINE 里取 root= 的设备名。"""
+    sh = _first_existing(BOOTIMG_SH_CANDIDATES)
+    if not sh:
+        return None, None
+    txt = _read_noncomment(sh)
     ms = re.findall(r'^CMDLINE="([^"]+)"', txt, re.M)
     if not ms:
-        return None
-    r = re.search(r"root=(/dev/\S+)", ms[-1])
-    return r.group(1) if r else None
+        return os.path.relpath(sh, ROOT), None
+    cmdline = ms[-1]
+    r = re.search(r"root=(/dev/\S+)", cmdline)
+    if r:
+        return os.path.relpath(sh, ROOT), r.group(1)
+    # root=${ROOT_DEV} 这种间接引用：顺着变量找默认值。
+    m = re.search(r"root=(\$\{[A-Z_]+(?::-[^}]*)?\})", cmdline)
+    if m:
+        var = m.group(1)[2:]
+        var = re.sub(r':-.*', '', var).rstrip('}')
+        v = _default_of(var, txt)
+        if v:
+            return os.path.relpath(sh, ROOT), v
+    return os.path.relpath(sh, ROOT), None
 
 
 def fstab_root_device():
-    if not os.path.isfile(FSTAB):
-        return None
-    for ln in open(FSTAB, encoding="utf-8"):
+    p = _first_existing(FSTAB_CANDIDATES)
+    if not p:
+        return None, None
+    for ln in open(p, encoding="utf-8"):
         ln = ln.split("#", 1)[0].strip()
         if not ln:
             continue
         f = ln.split()
         if len(f) >= 2 and f[1] == "/" and f[0].startswith("/dev/"):
-            return f[0]
-    return None
+            return os.path.relpath(p, ROOT), f[0]
+    return os.path.relpath(p, ROOT), None
 
 
 def main():
@@ -210,15 +256,24 @@ def main():
         print("  [WARN] CONFIG_%-24s = %-12s %s" % (sym, shown, why))
 
     # root= 一致性：boot.img 的 CMDLINE 与 rootfs 的 fstab 必须指向同一块设备
-    c = cmd_root_device()
-    f = fstab_root_device()
+    # 两边都报路径，好看出"读到的是哪一份"—— 之前只报设备名，读错文件也看不出来。
+    cs, c = cmd_root_device()
+    fs, f = fstab_root_device()
     print("\nroot= 一致性:")
-    print("  CMDLINE(root=%s)  fstab(%s)" % (c, f))
+    print("  CMDLINE(%s, root=%s)" % (cs or "没找到打包脚本", c or "?"))
+    print("  fstab  (%s, /=%s)" % (fs or "没找到 fstab", f or "无 / 条目"))
     if c and f and os.path.basename(c) != os.path.basename(f):
         print("  [WARN] 两边设备名不一致。设备名错一个字符，mount 就静默失败，"
               "表现就是卡在 fastboot。")
+    elif c and not f:
+        # 不报警：oneplus6 的 fstab 是遗留的 Comma 表，rootfs 就在 userdata 上、
+        # / 由 cmdline 挂，fstab 里本来就不会有 / 条目。但要说清楚，
+        # 不能像以前那样笼统地"跳过"—— 笼统跳过就等于这个检查一直在空转。
+        print("  [INFO] fstab 没有 / 条目：本分支根文件系统由 root= 挂载，"
+              "fstab 是遗留的 Comma 表（含 /persist /dsp 等本分支不挂的条目）。"
+              "因此只有 CMDLINE 一侧可验证：root=%s" % c)
     elif not c or not f:
-        print("  [WARN] 无法从脚本或 fstab 读到设备名，跳过")
+        print("  [WARN] 读不到 CMDLINE 的 root= 设备名，这条一致性检查无法执行")
 
     print("\n" + "=" * 78)
     if failed:
