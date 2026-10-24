@@ -1310,13 +1310,108 @@ Ubuntu 残留会和 Void 树混在一起。
 
 ### 16.6 已知遗留（不阻塞启动，需要实机验证）
 
-| # | 项 | 说明 |
+**2026-10-24 更新**：下表是 10-23 的原始清单。第 1/3/4/6 项已经修掉了，
+第 2 项这条记录本身是错的，第 8 项有新发现见 §16.7。
+
+| # | 项 | 10-23 状态 | 10-24 现状 |
+|---|---|---|---|
+| 1 | 无 udev | 包列表无 `eudev`；`core-services/` 目录不存在 | **已修**。`base_setup.sh` 加 `eudev`（Void 的 eudev 3.2.14 用 `vsv udevd` 自造 `/etc/sv/udevd`，所以 Dockerfile 里 `rm /etc/runit/runsvdir/default/udevd` 那行才有意义）；新增 `etc/runit/core-services/02-kmods.sh`，在 stage-1 启动 udevd **之前**显式 `modprobe` qrtr/qrtr-smd/mhi/mhi-net/usbnet/usb-net-cdc-ncm |
+| 2 | `/usr/comma/set-hostname.sh` 不存在 | ~~不存在，返回 127~~ | **这条记录是错的**。文件一直在：`userspace/root/usr/comma/set-hostname.sh`，209 字节，可执行。当时是 `ls` 输出被截断造成的误判 |
+| 3 | 8 个悬空服务 | `nftables`/`sshd` 功能性缺失 | **已修**。`sshd` 和 `nftables` 的 `/etc/sv/<svc>/run` 在 Dockerfile 里手写补上，并且**移到启用循环之前**（原实现在 120 行之后才写 run 脚本，循环跑到 sshd 时目录还不存在，被 guard 跳过 —— 也就是 SSH 从来没被启用过）；`cnss_daemon`/`polkitd` 从启用列表删除（覆盖层无目录、Void 无包、WiFi 也不需要，见 §16.7）；`qrtr-ns`/`tqftpserv`/`pd-mapper`/`rsyslogd`/`cnss_daemon`/`polkitd` 这些靠 Void 包提供，`base_setup.sh` 已装 `qrtr-ns`/`rmtfs`/`tqftpserv`/`pd-mapper`/`rsyslog`/`nftables` |
+| 4 | `/usr/default/home` 不存在 | `/home` overlay 起不来 | **已修**。`fs_setup.sh` 的 `lowerdir` 改成 `/home`（`userspace/root/home/` 里的 dotfiles 就是要当只读底层的），并加 `|| echo WARN` |
+| 5 | `HOST=comma` 写死 | 观感问题 | 仍在。不影响判定，观感问题 |
+| 6 | `/data/params`、`/data/media/0` 不在镜像里 | `comma.sh` 的 chown 会报错 | **已修**。`fs_setup.sh` 加 `mkdir -p /data/media/0 /data/params/d; chown -R comma:comma` |
+| 7 | `tools/runtime/load_camera_modules.py` 已删 | hard-fail 在 `comma,tizi` | 仍为已删除状态 |
+| 8 | dorapilot 的 ONEPLUS6 HAL 未验证 | 只有静态分析 | **有结论了，且是阻塞项**。见 §16.7：仓库里三条 openpilot 供应路径**没有一条**带 ONEPLUS6 HAL |
+
+### 16.7 最大的阻塞项：openpilot 的代码本身没有供应来源（2026-10-24 新发现）
+
+§8 讨论的是"OS 要给 openpilot 什么"，§9 讨论的是"`dragonpilot_nana` 这个 fork
+已经备好了什么"。但两者之间断了一节：**这个仓库里没有任何一条路径会把带
+ONEPLUS6 HAL 的 openpilot 代码放上设备。**
+
+三条现存的供应路径，逐条核实过：
+
+| 路径 | 它拉的是什么 | 有 ONEPLUS6 HAL 吗 |
 |---|---|---|
-| 1 | 无 udev | `base_setup.sh` 的包列表里没有 `eudev`，initramfs 用 mdev。`etc/runit/1` 里 `/usr/bin/udevd` 的分支会走 else、打印 WARN。877 个 `=m` 模块不会按 alias 自动加载。stage-1 引用的 `/etc/runit/core-services/` 目录在覆盖层里**不存在**（`02-kmods.sh` 有 `[ -x ]` guard，无害但模块确实没加载）。需要确认 qcom_camss 等必需驱动都是内置的 |
-| 2 | `/usr/comma/set-hostname.sh` 不存在 | stage-1 第 135 行无 guard 调用，返回 127。脚本没有 `set -e`，非致命；`serial-hostname` 服务另管 hostname |
-| 3 | 8 个悬空服务已改成跳过 | `qrtr-ns`/`tqftpserv`/`pd-mapper`/`rsyslogd`/`nftables`/`cnss_daemon`/`polkitd`/`sshd`。其中 `nftables` 和 `sshd` 是功能性的：防火墙不配、SSH 起不来。需要决定是给它们补 `/etc/sv/<svc>/run` 还是从服务列表删掉 |
-| 4 | `/usr/default/home` 不存在 | `fs_setup.sh` 的 overlay `lowerdir=/usr/default/home` 会失败，`/home` overlay 起不来。可能来自 Void 基础镜像，也可能本来就该在覆盖层里 |
-| 5 | `HOST=comma` 写死 | `build_system.sh:125` 把 hostname 设成 `comma`。openpilot 按 `/ONEPLUS6` 标识硬件，hostname 不影响判定，纯粹是观感问题 |
-| 6 | `/data/params`、`/data/media/0` 不在镜像里 | `userspace/root/data/` 只有 `misc/wifi/*`。`comma.sh` 假设 `/data/media` 存在（`sudo chown comma: /data/media`）。openpilot 自己会 `makedirs`，但 `comma.sh` 的 chown 会在缺目录时报错 |
-| 7 | `tools/runtime/load_camera_modules.py` 已删 | 它 hard-fail 在 `comma,tizi` 兼容字符串上，对一加6 是死代码 |
-| 8 | dorapilot 的 ONEPLUS6 HAL 未验证 | 仓库里没有 openpilot checkout，`class OnePlus6(HardwareBase)` 来自第 12 节的静态分析，没有跑过 |
+| `userspace/root/usr/comma/setup`（7.6 MB zipapp，2026-09-19 打包） | `openpilot/system/hardware/` 下只有 `chestnut`、`comma`、`tici` | **没有**。`__init__.py` 里连 `TICI`/`AGNOS`/`PC` 三个变量都不定义 |
+| `userspace/root/usr/comma/installer_dorapilot`（ELF，strings 提取） | `https://github.com/dorapilot/openpilot.git` @ `liberation-day-7.2` | **没有** —— 这正是上面那个 zipapp 的同源上游 |
+| `userspace/root/usr/comma/installer`（ELF） | `https://github.com/commaai/openpilot.git` @ `release3-staging` / `release-tizi-staging` / `release-mici-staging` | **没有** —— 那是 Comma 官方树 |
+
+带 HAL 的代码只在**本地**：`/home/ubuntu/openpilot_oneplus/dragonpilot_nana`，
+分支 `oneplus6-0.11.1-20251018`（HEAD 已到 `cfaf9e53`，比 §9 记的 `2a9fb456` 新）。
+它有 `system/hardware/oneplus6/`、`system/hardware/pc/`、
+`ONEPLUS6 = os.path.isfile('/ONEPLUS6')`，还有 §9.1 列的那 3 个守护进程。
+
+`userspace/uv/openpilot/pyproject.toml` 那个"stub"（4342 字节）是故意的，不是残缺：
+`userspace/uv/pyproject.toml` 里 `openpilot = { path = "openpilot" }` 只要它的
+依赖列表来拉 `comma-deps-*`，代码注释写明"the code comes from /data/openpilot
+via PYTHONPATH on device"。问题不在 stub，在于**没有任何东西去填 `/data/openpilot`** ——
+`userspace/root/data/` 只有 `misc/wifi/*`，全仓库 grep `/data/openpilot` 只命中
+3 个测试脚本和 1 个 bench 脚本的引用，没有一处是生产者。
+
+另外 zipapp 里只有 Python 源码、没有 C++ 二进制（`selfdrive/controls/controlsd.py`
+有，`selfdrive/controls/controls` 没有），`dragonpilot_nana` 本地也没有编译产物
+（`controls`/`selfdrived`/`locationd`/`modeld`/`sensord`/`transformd`/`ui` 全空）。
+所以就算把 Python 树搬过去，`scons` 编译仍是设备上的事。
+
+**结论**：现在的镜像刷到一加6 上，`/ONEPLUS6` 这个标记文件会被创建，
+但没有任何代码去读它 —— openpilot 起不来。这一条不补上，前面所有工作
+（内核、boot、rootfs、服务）都只是让手机能进桌面，进不了辅助驾驶。
+
+需要拍板的：怎么把 `dragonpilot_nana` 变成一个可重复的供应来源
+（本地路径硬编码不可接受，至少得是一个 git 仓库 + ref）。
+三种做法见 §12.5 之后的补充：把它做成子模块 / 在镜像里 vendor 一份 Python 树 /
+重编 installer 指向新 ref。
+
+### 16.8 2026-10-24 的改动（服务与构建侧）
+
+除 §16.6 表格里列的之外，当天还做了这些：
+
+- **砍掉 6 个 Comma 主板专属服务**（`tools/build/Dockerfile`）：`gpio`、`lte`、
+  `power_monitor`、`power_drop_monitor`、`brightnessd`、`sound`。
+  危害按严重度排：
+  - `lte` 最严重。`lte.sh start` 是 `until is_online; do reset; power_button; done`，
+    而 `is_online` 靠 `lsusb -d "0x05c6:"` 判断 —— `0x05c6` 是 Comma 自己的 USB
+    厂商号，一加6 上永远不存在，所以它退化成每 ~2 秒拨一次 TLMM gpio50/gpio116
+    的**死循环**。
+  - `gpio` 第二严重。`gpio.sh` 最后一行无条件 `gpio 30 1`（direction=out + value=1）。
+    而一加6 的 panel 节点里是 `esd-pins { pins = "gpio30"; }` —— **30 就是屏幕
+    ESD 保护脚**，被抢过去锁成输出，和 DRM 面板驱动正面冲突。
+  - `power_drop_monitor` 第三严重。它跟一颗 INA231 对话（I2C 0x40 + PM8998 GPIO4）。
+    一加6 上没有那颗芯片也没有 PM8998，`PM8998_BASE` 回退成 0，告警脚变成
+    根本没导出的 gpio3；更危险的是电压读数有 `/sys/class/hwmon/hwmon1/in1_input`
+    兜底 —— 万一 hwmon1 存在但属于别的传感器，它会拿那个值当电池电压，
+    低于 4000mV 就 SIGKILL 整个 comma cgroup 然后关机。
+  - `power_monitor` 读 `/dev/input/by-path/platform-894000.i2c-event`（PM8998 的
+    中断输入设备），不存在。
+  - `brightnessd` 要写 `/sys/class/backlight/panel0-backlight/`。更根本的是：
+    本分支 DTB 里**没有 backlight 节点**（`dtc` 反编译确认 compatible 里没有任何
+    `*-backlight`，唯一的 "backlight" 是 pmi8998 LED 节点的 label），
+    服务没有作用对象。
+  - `sound` 的 `sound_init.sh` 用 `case "$(cat .../base/model)"` 只认 `comma tizi` /
+    `comma mici`，其余 `exit 1`。
+  只从 runit 启用列表里拿掉，脚本本体留在 rootfs 里，要恢复很容易。
+- **`etc/runit/1` 的 `mount_part` 改为按 `blkid` 自动探测文件系统**，并 mkdir 挂载点。
+  Comma 的 cache 是 ext4，一加6 出厂是 FAT，写死 ext4 的选项（`relatime`、
+  `data=ordered`、`discard`）落在 vfat 分区上会直接 mount 失败。同时删掉
+  `persist:/persist:ro` 和 `dsp_a:/dsp:ro`：persist 违反"不创建 /persist"的约束，
+  参考项目的 fstab 也只有 `/dev/sda17 -> /` 一条；一加6 出厂分区表里没有 `dsp_a`。
+- **ccache 真正接上**（`build_kernel_oneplus6.sh`）。之前脚本挂了 `/ccache` 卷、
+  注释里也写着"ccache 复用已成功的对象文件"，但 make 的 `CC` 从来没设过 ——
+  make 默认直接调 `aarch64-none-elf-gcc`，`ccache -s` 显示 0.00% 就是这个的直接
+  证据，每次内核构建都是冷编译。现在 `CC='ccache aarch64-none-elf-gcc'` +
+  `CCACHE_DIR`，并在构建前后打印缓存状态，命中率为 0 会 WARN。
+- **修掉 `ccache -s 2>/dev/null` 的 stderr 误用**。`ccache -s` 的输出在 **stderr**，
+  那个重定向会把整份统计删光，而退出码仍是 0，所以 `|| echo "ccache 不可用"`
+  的回退永远不会触发 —— 构建日志里只剩一行孤零零的 "ccache 统计:"。
+- **`screen_calibration.py` 的 `assert` 改成干净检查**。`COMMAND_FILE` 是
+  `/sys/kernel/debug/dsi_dwo_video_display/mipi_command`，来自 Comma 下行 DRM 驱动，
+  上游 msm/drm 没有这个节点。原来先判 gamma 文件、再 `assert` debugfs 路径，
+  一旦 gamma 文件出现而接口没跟上，AssertionError 会直接抛出去、runsv 反复重启。
+  现在两个前置条件都当"跳过"处理。
+- **`fs_setup.sh` 增加 rootfs 自动扩容**：镜像固定 6G，一加6 的 userdata 远大于此，
+  不扩的话 `/` 永远只有 6G。`resize2fs` 幂等，每次开机跑一次没有副作用。
+- **`sshd_config` 删掉 DSA HostKey 行**：OpenSSH 8.7 起 `ssh-keygen` 不再支持 DSA，
+  留着每次开机一条 "unsupported key format"，而且万一哪天只剩 dsa 一个条目，
+  sshd 会因 "No supported host key types" 直接退出。

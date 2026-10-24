@@ -199,6 +199,13 @@ RUN mkdir -p /etc/sv/nftables && \
 # 这条标准 QMI over SMD 路径（下面都在启用列表里）。
 # 脚本本身留在 rootfs 里（lte.nmconnection 和 udev 规则都是无害的），
 # 只是不给它们 /etc/runit/runsvdir/default/ 的符号链接 —— 要恢复很容易。
+#
+# cnss_daemon / polkitd 也刻意不启用：覆盖层里没有这两个 /etc/sv 目录，
+# Void 也没有 cnss-daemon 包（srcpkgs/cnss-daemon/template 404，已核实）。
+# WiFi 不需要 cnss-daemon —— ATH10K=y + ATH10K_PCI=y + ATH10K_SNOC=y 全内置，
+# ath10k 在 probe 时自己从 /lib/firmware/ath10k/WCN3990/hw1.0/ 拉固件
+# （上面的 COPY 已就位），参考项目也走这条路：它的 wifi-mac.service
+# 只是等 wlan0 和 wiphy 注册，并不起 cnss-daemon。
 RUN for svc in \
   ipa_fws fs_setup init-qcom \
   avahi-ssh-publish \
@@ -208,7 +215,7 @@ RUN for svc in \
   qrtr-ns rmtfs tqftpserv pd-mapper \
   comma bluetoothd magic \
   ssh-param-watcher ncm-param-watcher dnsmasq \
-  rsyslogd nftables cnss_daemon polkitd \
+  rsyslogd nftables \
   sshd agetty-ttyMSM0 agetty-ttyAMA0; do \
     if [ -d "/etc/sv/$svc" ]; then \
       ln -sf /etc/sv/$svc /etc/runit/runsvdir/default/; \
