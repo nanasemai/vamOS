@@ -1540,23 +1540,65 @@ via PYTHONPATH on device"。问题不在 stub，在于**没有任何东西去填
   `cp` 不做 fragment merge（注释里写明了是有意的，避免基线漂移静默降级），
   所以改这里就是改最终配置。手写的注释（EXTRA_FIRMWARE、RTC 必须内置等）
   是项目文档的一部分，不能拿 `olddefconfig` 的输出去覆盖 —— 它会把注释全删。
+- **空掉 `CONFIG_EXTRA_FIRMWARE`（构建硬阻塞）**。这条清单里原本列了 11 个
+  固件，意图是 `CONFIG_FIRMWARE_IN_KERNEL`（把固件嵌进 Image.gz）。但**那个
+  选项在这个内核版本里已经整个删除了** —— 全树 grep `config FIRMWARE_IN_KERNEL`
+  零命中，`.config` 里也没有这一行。现在的实际情况是
+  `drivers/base/firmware_loader/Makefile` 里 `obj-y += builtin/` **无条件构建**，
+  `builtin/Makefile` 只要 `EXTRA_FIRMWARE` 非空就逐个去嵌，而它读的是
+  `<EXTRA_FIRMWARE_DIR>/<name>` = `/lib/firmware/qcom/a630_sqe.fw` ——
+  **构建机上的绝对路径**，容器里不存在。于是每次编译都死在：
+  ```
+  make[7]: *** No rule to make target '/lib/firmware/qcom/a630_sqe.fw',
+          needed by 'drivers/base/firmware_loader/builtin/qcom/a630_sqe.fw.gen.o'.
+  error: empty firmware: /lib/firmware/qcom/a630_sqe.fw
+  ```
+  而且 4 次重试全死，因为这是确定性的、不是瞬态的。
+  顺带的教训：`build_kernel_oneplus6.sh` 里那条
+  `grep -c '^CONFIG_FIRMWARE_IN_KERNEL=y'` 的 WARN **永远不会触发**（选项不存在），
+  等于一整轮构建的零保护 —— 注释说"EXTRA_FIRMWARE 是空转的"本身就是错的，
+  清单从来没空转过，是**每次都真的在嵌**。现在换成硬断言：非空直接 fail。
+  本分支一直是运行时加载（`kernel/firmware/` → rootfs `/lib/firmware/`），
+  内嵌本来就不是设计的一部分。`EXTRA_FIRMWARE_DIR` 留着无害。
+- **ccache 目录被 docker 建成 `root:root 755`（构建硬阻塞）**。
+  `CCACHE_DIR=build/.ccache-kernel` 第一次绑定时目录不存在，docker 为 bind mount
+  用 `root:root 755` 自动创建，而容器跑在 `-u <uid>:<gid>` 下 → 不可写。
+  ccache 拿到不可写缓存目录**不是**退化成直调编译器，而是直接失败，报错在
+  `syncconfig` 阶段：
+  ```
+  ccache aarch64-none-elf-gcc: unknown assembler invoked
+  scripts/Kconfig.include:51: Sorry, this assembler is not supported.
+  ```
+  报错里一个字都没提 ccache，看起来完全是交叉工具链坏了 —— 而构建日志里
+  `make ... Image.gz dtbs modules` 那行前面带着 `CC='ccache aarch64-none-elf-gcc'`，
+  要顺着这条线回看才能定位。
+  **更严重的隐藏损害**：之前每一轮内核构建都是**冷编译**。脚注释写"ccache 复用
+  已成功的对象文件，所以重试很便宜"，这条从来没成立过 —— `build/.ccache-kernel`
+  一直是 4.0K（空目录）。也就是说"GCC ICE 重试"的便宜假设是假的，每次重试都在
+  从头编一遍。现在 `docker run` 之前显式 `mkdir -p` + `chown`（必要时借 sudo），
+  并把原来的 `[WARN] 不可写` 提升为硬失败 —— 因为那不是性能损失，是构建失败。
+  顺带修掉一个变量名手误 `${CCCACHE_DIR}`（会打印成空）。
+- **确认 DTB 与内核可以编出**（截至本节写作时）：`sdm845-oneplus-enchilada.dtb`
+  与 `sdm845-oneplus-fajita.dtb` 都正常 `DTC` 出来了。构建仍在跑，
+  完整产物（Image.gz / modules / kernel-rootfs.tar）以脚本退出码为准。
 
 ### 16.9 已知遗留：initramfs 里没有固件（DSP 自动启动必然 ENOENT）
 
-**先说清楚这不是新引入的问题，而是这个项目早就定下的设计**。
-`build_kernel_oneplus6.sh` 里已经有一段权威注释：
+**先说清楚这不是新引入的问题，而是这个项目早就定下的设计**：所有固件都在
+`kernel/firmware/` 下、由构建脚本和 Dockerfile 拷进 rootfs 的 `/lib/firmware/`，
+驱动 probe 时走运行时 `request_firmware()`。所以"probe 时固件不在"是这个架构的
+**既定状态**，本节讨论的是它的实际后果。
 
-```
-# 固件不进内核镜像：CONFIG_FIRMWARE_IN_KERNEL 在本 defconfig 里是 unset，所以
-# CONFIG_EXTRA_FIRMWARE 那串清单是**空转**的，全部走运行时 request_firmware()
-# 从 /lib/firmware 读。这也解释了为什么 initramfs 之前不 mount /firmware 也能开
-# 机 —— GPU/venus/ADSP/wlan 都要等 rootfs 挂上才有固件。
-```
-
-`CONFIG_FIRMWARE_IN_KERNEL` 确实是 unset，`EXTRA_FIRMWARE` 那条清单是空的，
-所有固件都在 `kernel/firmware/` 下、由 Dockerfile 拷进 rootfs 的
-`/lib/firmware/`。所以"probe 时固件不在"是这个架构的**既定状态**，
-本节讨论的是它的实际后果。
+> **更正（2026-10-24）**：这一节原本引用了 `build_kernel_oneplus6.sh` 里的一段
+> 注释，声称"`CONFIG_FIRMWARE_IN_KERNEL` 在本 defconfig 里是 unset，所以
+> `CONFIG_EXTRA_FIRMWARE` 那串清单是**空转**的"。**这两句都是错的**：
+> `CONFIG_FIRMWARE_IN_KERNEL` 这个选项在这个内核版本里已经整个删除了
+> （全树 grep 零命中），而 `EXTRA_FIRMWARE` 那条清单**一直非空**、**从来没空转过**
+> —— 它每次都真的在嵌固件，并因此把构建搞挂（详见 §16.8 最后两条）。
+> 那份注释当时是构建一直失败的**帮凶**：它让看代码的人确信"固件走运行时加载"，
+> 而真正在作怪的那 11 个条目看起来完全无害。注释里的**结论**（运行时加载、
+> 固件不进内核镜像）是对的，是**理由**写错了。那段注释已经改成了真正的理由，
+> 并换成硬断言。
 
 这是 §16.8 那条改动的另一半，值得单独记一笔，因为它的修法需要一次**分区大小
 决策**，不能随手改。
