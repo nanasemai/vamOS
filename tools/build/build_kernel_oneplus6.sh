@@ -465,7 +465,18 @@ docker_make() {
     return 1
 }
 
-docker_make 4 "-j${PARALLEL_JOBS} Image.gz dtbs modules" || {
+# 只编自己的 DTB，不用 `dtbs`。
+# `dtbs` 是**全树**目标：一次构建要过 2330 个 DTC + 466 个 OVL
+# （x1p42100-*、j721e-*、imx8mp-* ... 全是别的 SoC），2800 多次 dtc 调用，
+# 而我们要的只有两个。这两个都注册在 qcom/Makefile 里
+# （dtb-$(CONFIG_ARCH_QCOM) += sdm845-oneplus-enchilada.dtb / -fajita.dtb），
+# 所以可以当独立目标点名要，不需要改 Makefile。
+# 两个都编 —— 一次内核构建同时服务 enchilada 和 fajita，
+# build_bootimg_oneplus6.sh 按 DEVICE 挑对应那个。
+DTB_TARGETS="arch/arm64/boot/dts/qcom/sdm845-oneplus-enchilada.dtb \
+arch/arm64/boot/dts/qcom/sdm845-oneplus-fajita.dtb"
+
+docker_make 4 "-j${PARALLEL_JOBS} Image.gz ${DTB_TARGETS} modules" || {
     echo "[ERROR] 内核编译在 4 次尝试后仍然失败"
     exit 1
 }
