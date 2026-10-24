@@ -1503,3 +1503,74 @@ initramfs 由 rootfs 自己的 `initramfs-tools` 生成，固件本来就在那�
 2. **仿参考项目把固件塞进 initramfs**，同时给 `tools/flash/oneplus6.sh`
    加 boot 分区扩容（或改 GPT）。代价是 boot.img 变大、启动变慢、
    A/B 槽写盘时间拉长。
+
+### 16.10 实机验证清单（静态分析到此为止，剩下只能靠设备）
+
+前面 §16.1–§16.9 全是静态推演。下面这些**只能在一加6 上确认**，按"多快能查"
+和"阻塞程度"排。刷完机先看第 1、2 条。
+
+**A. 开机第一屏就能看的（决定"能不能用"）**
+
+1. `boot` 能不能起来。判据：`dmesg | head -80` 有 `Boot CPU`、`Freeing initrd`，
+   且 `/dev/sda17` 出现。参考项目 §16.3 记录过静默 panic 的失败模式
+   （init 不检查 mount 返回值 → switch_root 到空目录 → panic → ABL 判失败
+   → 回 fastboot，全程零报错），所以**只要没有回到 fastboot 就算过了**。
+2. `dmesg` 里找 `adsp` / `cdsp` / `qcom_pas` 的报错。这是 §16.9 的直接判据：
+   - 有 `request_firmware_nowait err` 或 `firmware 'qcom/sdm845/...' not found`
+     → auto-boot 确实 ENOENT，看 `adsp`/`cdsp` 服务有没有把设备救回来
+     （`sv status adsp cdsp` + 服务日志）。
+   - 完全没有 remoteproc 相关行 → PAS 驱动压根没 probe，DTB 侧要看。
+3. `sv status` 全表。重点看 `fs_setup`、`magic`、`comma`、`adsp`、`cdsp`。
+   `magic` 起不来 `comma` 就永远在等（`comma/run` 里 `sv check magic` 循环
+   30 秒）——那是整条 openpilot 链路的最上游。
+4. `mount | grep -E 'cache|firmware|overlay'`。确认 cache 按 blkid 探测挂上了
+   （ext4 和 FAT 都不能挂错），`/home` overlay 在。
+
+**B. 网络和身份（第 5 分钟）**
+
+5. `ip a` 看有没有 wlan0。ath10k 是内置驱动，固件在 rootfs 的
+   `/lib/firmware/ath10k/WCN3990/hw1.0/` —— 但注意它和 DSP 有**同样的问题**：
+   PCI probe 发生在 initramfs 阶段，那时 rootfs 还没挂上。这一条和 §16.9
+   是同一个根因，WiFi 可能是最直观的验证器。
+6. `sv status dnsmasq`。现在 NCM 默认关了（§16.8），dnsmasq 应该处于 down。
+   **反过来确认 USB 没被绑掉**：`ls /config/usb_gadget/ 2>/dev/null` 里不应该
+   有 `g1/UDC` 绑着值；`lsusb` 里不应该出现 `1d6b:0103`。
+   这条过了之后 `fastboot`/ADB 才用得了 —— 上一版会把它杀掉。
+7. `hostname` 应该是序列号，不是 `comma`（§16.6 第 2 项、第 5 项）。
+
+**C. 显示和 GPU（第 10 分钟）**
+
+8. `/dev/dri/card0` 存在，`weston`/`magic` 起的起来，屏幕亮。
+   `focus=192` 是拍死的（用户 2026-10-22 视觉上选过），别动。
+9. `dmesg | grep -i 'msm\|mdss\|dpu\|dsi'`。屏幕 ESD 脚 gpio30 现在没被抢了
+   （`gpio` 服务已删），DPU 应该正常初始化。
+
+**D. 相机（第 20 分钟）**
+
+10. `ls /dev/video*`。DTB 里有三个 sensor（`sony,imx371`/`sony,imx519`/
+    `sony,imx376k`），驱动 OF 表对得上，`CONFIG_VIDEO_QCOM_CAMSS=y`。
+    参考项目的结论是"缺口全部在用户空间 —— 缺 libcamera 的 camss 管线处理器"，
+    而且那套 `libcamera + v4l2loopback` **只服务桌面会议软件**，不是 openpilot
+    的取图路径。openpilot 取图要走 C++ HAL，见 §16.7。
+
+**E. openpilot 本体（唯一的硬阻塞）**
+
+11. **`/ONEPLUS6` 标志文件和 HAL 从哪来** —— §16.7。仓库里三条供应路径
+    （setup zipapp / installer_dorapilot / installer）没有一条带 ONEPLUS6 HAL，
+    HAL 只在本地 `/home/ubuntu/openpilot_oneplus/dragonpilot_nana` 里。
+    这一条不解决，前面 A–D 全过了 openpilot 也跑不起来。
+    需要决定：发成 git 仓库 + ref / 加成 submodule / 从可配置路径把 Python 树
+    vendor 进镜像 / 重编 installer ELF 指向新 ref。
+
+**验证时顺手记下来的命令**（下次不用再想）：
+
+```sh
+sv status; echo ---; sv stat /etc/runit/runsvdir/default/*
+dmesg | grep -iE 'adsp|cdsp|slpi|remoteproc|firmware|qcom_pas'
+dmesg | grep -iE 'ath10k|wlan|firmware'
+sv status adsp cdsp && cat /var/log/... 2>/dev/null
+ls /sys/class/remoteproc/ 2>/dev/null && cat /sys/class/remoteproc/*/name
+ls -la /dev/dri /dev/video* 2>&1
+mount | grep -E 'cache|overlay|firmware'
+lsusb
+```
