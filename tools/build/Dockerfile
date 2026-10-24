@@ -299,6 +299,9 @@ COPY ./userspace/eval/rootfs-manifest.sh /usr/local/bin/
 COPY ./userspace/eval/rootfs-diff.sh /usr/local/bin/
 COPY ./userspace/eval/rootfs-export.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/rootfs-*.sh
+# op-launch 是 openpilot 的启动入口（见脚本头部注释：rootfs 里没有任何东西会
+# 拉它，setup->installer 那条链在本分支走不通）。COPY 之后确认一次可执行位。
+RUN chmod +x /usr/local/bin/op-launch.sh 2>/dev/null || true
 
 # Read-only rootfs setup
 COPY ./userspace/readonly_setup.sh /tmp/vamos/

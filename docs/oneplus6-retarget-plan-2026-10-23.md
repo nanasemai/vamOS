@@ -1420,6 +1420,64 @@ via PYTHONPATH on device"。问题不在 stub，在于**没有任何东西去填
 记录了上游基线 commit —— 这就是"可重复来源"要 pin 的那个 ref，
 只是现在只存在于本地文件系统里，没有推到任何远端。
 
+#### 16.7.2 已补齐：源码供应路径（`prep_openpilot.sh`）
+
+§16.7 最后那句"需要拍板的：怎么把 `dragonpilot_nana` 变成一个可重复的
+供应来源"已经做了一份默认实现，取的是三种做法里的第二种（vendor 一份 Python
+树），加上路径可配置 + ref 记录，避免硬编码本地路径。
+
+- **`tools/build/prep_openpilot.sh`**：把源码树拷到
+  `userspace/root/data/openpilot/`，由 `build_system.sh` 在 `docker buildx`
+  **之前**调用，Dockerfile 里已有的 `COPY ./userspace/root/ /` 顺手带进镜像，
+  不需要改 COPY 语句。入口是 `OPENPILOT_SRC`，默认
+  `/home/ubuntu/openpilot_oneplus/dragonpilot_nana`。
+  - 用 `rsync -a` 而不是 `cp`：**GNU cp 9.4 没有 `--exclude` 选项**
+    （试过的，报 `未识别的选项`），而 `.git` + `.venv` 有 2.2G，先拷后删
+    纯属浪费。
+    `-a` 不能省：这个 fork 的 `openpilot/` 是符号链接扇出
+    （`openpilot/selfdrive -> ../selfdrive/`、`-> ../system/`、`-> ../tools`、
+    `-> ../common`），相对目标在拷贝内部依然可解析，拷完仍然有效。
+    丢 `-a` 就是断链，`import openpilot.selfdrive` 直接失败。
+  - 拷之前做四道硬校验，而不是拷完才发现：`pyproject.toml` 存在、
+    `name = "openpilot"`、`selfdrive/` 存在、三个核心模型
+    （`driving_vision` / `driving_policy` / `dmonitoring_model`）非空。
+    缺模型时会检查 `*.chunkNNofNN` 分片并提示先 `git lfs pull` 重组
+    —— 这个 fork 本地就有这个坑（`big_driving_vision.onnx` 只有 7 个分片
+    没重组），但分片是可选的大模型，三个核心模型是完整的。
+  - 排除 `.git/`、`.venv/`、`__pycache__`、`*.chunk*`、`.ruff_cache/`、
+    `.mypy_cache/`、`.pytest_cache/`、`.idea/`、`.vscode/`。
+    实测结果：**3781 个文件 / 235M**（`.venv` 是 1.1G 且是 **x86_64** 的，
+    设备上完全无用）。
+  - 写 `/data/openpilot/.openpilot-manifest`：`openpilot_repo` /
+    `openpilot_ref` / `built`。rootfs 和 openpilot 的对应关系从此可追溯，
+    这也是 OTA 更新器判"哪个 rootfs 配哪个 openpilot"需要的东西。
+- **`.gitignore` 加 `userspace/root/data/openpilot/`**：不进库。
+  68MB 核心模型 + 150MB 源码进 git 会让仓库翻倍、每次改模型产生巨型 diff。
+  用 `git check-ignore -v` 验过规则真的命中。
+  同时确认过 `.dockerignore` **不**排除 `userspace/`，构建上下文里确实带得上。
+- **`build_system.sh` 里 `OPENPILOT_SRC` 为空就跳过**，不设默认值。
+  理由：内核/rootfs 构建不该被"本机有没有一份 fork 源码"这个无关条件卡住；
+  真正要打进镜像时才显式指定。
+- **`userspace/root/usr/local/bin/op-launch.sh`**：openpilot 的启动入口。
+  验过的事实是 rootfs 里**没有任何东西**会拉 openpilot —— 原厂链路是
+  `comma.sh -> setup -> /tmp/installer (ELF) -> /data/continue.sh ->
+  launch_openpilot.sh`，而 `/tmp/installer` 是 Comma 的 provisioning ELF
+  （本分支没有，§16.7），链子卡在 `waiting for installer`。
+  源码和 venv 都在，就缺这一环。脚本设 `PATH=/usr/local/venv/bin:$PATH`
+  和 `PYTHONPATH=/data/openpilot`（**指仓库根**，因为 `selfdrive` / `common` /
+  `cereal` 都在根上、只有 `openpilot/` 是包），然后
+  `cd /data/openpilot && exec ./launch_openpilot.sh`。
+  刻意**没**做成 runit 服务、也**没**写 `/data/continue.sh`：开机是否自动拉
+  openpilot、要不要绕过 setup UI，是产品行为，不该由构建脚本替用户决定。
+  想自动化就加个 `/etc/sv/op/run` 或让 setup 生成 `continue.sh` 指向它。
+
+**这一节之后仍然缺的**（§16.7 的两条主结论都还成立）：
+1. 三个原厂 installer 都没有 ONEPLUS6 HAL —— 但它们本来就不是必需环节了，
+   源码已经直接进镜像，绕过了 installer 的下载职责。剩下的是让 setup 流程
+   不再死等 `/tmp/installer`。
+2. **SCons 编译仍是设备上的事**（§16.7.1 已确认 `aarch64` 是正式支持目标，
+   所以这是"首次启动时编一次"，不是"编不了"）。
+
 ### 16.8 2026-10-24 的改动（服务与构建侧）
 
 除 §16.6 表格里列的之外，当天还做了这些：

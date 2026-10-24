@@ -80,6 +80,23 @@ fi
 # Increased from 4500M to 6G for Python packages
 ROOTFS_IMAGE_SIZE=6G
 
+# Openpilot 源码供应。
+#
+# `uv sync` 只装依赖，代码本体按 userspace/uv/pyproject.toml 的约定在设备上从
+# /data/openpilot 经 PYTHONPATH 加载，而本仓库里从来没有任何步骤把代码放进去
+# （也没有 launch_openpilot.sh）。刷上去能开机进 SSH，但 openpilot 没东西可跑。
+# prep 脚本把树拷到 userspace/root/data/openpilot/，Dockerfile 已有的
+# `COPY ./userspace/root/ /` 会顺手带进去，不需要改 Dockerfile。
+#
+# 这里不设默认值而是不给就跳过 —— 内核/rootfs 构建不该被"本机有没有一份
+# fork 源码"这个无关条件卡住；真正要打进镜像时才用 OPENPILOT_SRC 指定。
+if [ -n "${OPENPILOT_SRC:-}" ]; then
+  echo ""
+  echo "==> 供应 openpilot 源码 (OPENPILOT_SRC=${OPENPILOT_SRC})"
+  OPENPILOT_SRC="$OPENPILOT_SRC" "$DIR/tools/build/prep_openpilot.sh"
+  echo "==> 完成"
+fi
+
 # Create temp dir if non-existent
 mkdir -p "$BUILD_DIR" "$OUTPUT_DIR" "$DOWNLOADS_DIR"
 

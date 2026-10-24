@@ -6,3 +6,7 @@
 **/*.tar.xz
 
 __pycache__/
+
+# openpilot 源码由 tools/build/prep_openpilot.sh 在构建时拷入（不入库）。
+# 核心模型 ~68MB + 源码 ~150MB，进 git 会让仓库翻倍且每次改模型都产生巨型 diff。
+userspace/root/data/openpilot/
