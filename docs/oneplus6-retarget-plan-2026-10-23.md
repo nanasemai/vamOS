@@ -1364,6 +1364,62 @@ via PYTHONPATH on device"。问题不在 stub，在于**没有任何东西去填
 三种做法见 §12.5 之后的补充：把它做成子模块 / 在镜像里 vendor 一份 Python 树 /
 重编 installer 指向新 ref。
 
+#### 16.7.1 更正：C++ 是可以编的，`aarch64` 就是这个 fork 的正式目标
+
+上面最后那句"`scons` 编译仍是设备上的事"容易让人以为 C++ 根本没法编。
+不对。翻过 `dragonpilot_nana` 的构建系统后，实际情况是：
+
+- **这个 fork 用的是 SCons，不是 CMake**。根目录有 `SConstruct`（9539 B）和
+  `site_scons/site_tools/cython.py`。上游 commaai/openpilot 近几个版本迁到了
+  CMake，这个 fork（基于 `liberation-day-7.2`）还停在 SCons 时代。
+  所以之前"全树找不到 `CMakeLists.txt`"是**符合预期的**，不是缺东西。
+- **`aarch64`（非 TICI）是 SConstruct 里显式支持的架构**：
+  ```python
+  TICI = os.path.isfile('/TICI')
+  ...
+  assert arch in [
+    "larch64",  # linux tici arm64
+    "aarch64",  # linux pc arm64   <-- 一加6 + VAMOS 就是这个
+    "x86_64",   # linux pc x64
+    "Darwin",
+  ```
+  `TICI` 靠 `/TICI` 标记文件判定。一加6 上没有 `/TICI`，`uname -m` 是
+  `aarch64`，所以它落到 `aarch64` 分支，走普通 `gcc`，没有 `-D__TICI__`、
+  没有 `-mcpu=cortex-a57`（那两个是 `larch64` 专属）。
+  这也解释了为什么 `system/hardware/pc/` 和 `system/hardware/oneplus6/` 并存 ——
+  "pc" 就是这个通用 aarch64 目标。
+- **相机管线设计已经写死了**（`common/transformations/camera.py`）：
+  ```python
+  # oneplus6: camera-bridge center-crops 1280x720 out of the 1920x1080 IMX519 mode,
+  # so the effective focal length is ~1640 px, not the full-sensor ~910 px.
+  _onep6_config = DeviceCameraConfig(CameraConfig(1280, 720, 1640.0),
+                                     _NoneCameraConfig(), _NoneCameraConfig())
+  DEVICE_CAMERAS["oneplus6", "unknown"] = _onep6_config
+  ```
+  也就是说：**只挂一个前向摄像头**，用 IMX519 的 1920x1080 模式经
+  camera-bridge 中心裁成 1280x720，openpilot 再从 `/dev/videoN` 读。
+  这和参考项目 `userspace/camera/README.md` 里那套 libcamera + v4l2loopback 的
+  "desktop-only" 定位对得上 —— 但在 openpilot 语境下它不是 desktop-only，
+  它就是喂给 modeld 的取图路径。
+- `launch_env.sh` 里 `export QCOM_PRIORITY=12`、`AGNOS_VERSION="18.4"` ——
+  默认按 QCOM 环境跑，说明作者预期的目标就是高通芯片 + 类 AGNOS 用户空间。
+
+所以真正的剩余工作分两段，都不含糊：
+
+1. **编 C++**：在一台 aarch64 机器上（或交叉编译）跑 SCons 把原生二进制编出来。
+   `--minimal` 默认值注意：`default=(not TICI and not release)`，PC 上默认是
+   extras 全开，设备上要显式 `--minimal` 才只编最小集。
+2. **供 Python 树**：把编好的二进制 + Python 树放到设备上 `/data/openpilot`
+   （`userspace/uv/pyproject.toml` 的注释写明 "the code comes from /data/openpilot
+   via PYTHONPATH on device"）。
+
+第 1 段是本分支完全做不到的（本机是 x86_64，而且 SCons 的 `-mcpu=cortex-a57`
+之外的交叉编译配置需要 fork 自己支持），第 2 段可以做到。
+
+另外 `git_src_commit` / `git_src_commit_date` 两个文件在 fork 根目录，
+记录了上游基线 commit —— 这就是"可重复来源"要 pin 的那个 ref，
+只是现在只存在于本地文件系统里，没有推到任何远端。
+
 ### 16.8 2026-10-24 的改动（服务与构建侧）
 
 除 §16.6 表格里列的之外，当天还做了这些：
