@@ -1694,6 +1694,49 @@ initramfs 由 rootfs 自己的 `initramfs-tools` 生成，固件本来就在那�
 
 ### 16.10 实机验证清单（静态分析到此为止，剩下只能靠设备）
 
+`make -j5 Image.gz dtbs modules` 一轮下来按目录统计的 `.o` 数：
+
+```
+1505 drivers    538 net    456 fs    277 lib
+ 252 kernel     236 arch   235 sound
+```
+
+`drivers` 下面最占地方的几个：
+
+```
+369 clk    224 acpi    90 pci    89 pinctrl    66 soc
+ 65 tty     64 char    61 phy    51 regulator
+ 44 xen                     44 dma
+```
+
+几个明显不该在一加6 上编的：
+
+- **`acpi`（224 个 .o）**。ARM64 的 ACPI 是给 `x1p42100-*`、
+  `thinkbook-*` 那批笔记本/服务器用的。一加6 的整份固件都走 DT，
+  ABL 也不暴露 ACPI 表。`CONFIG_ACPI` 关掉可以省一大块。
+- **`xen`（44 个 .o）**。Xen hypervisor 前端。手机上没有 hypervisor。
+- **`gpu/drm/arm/display/komeda`**。Allwinner / Raspberry Pi 的显示驱动，
+  和 Adreno 毫无关系（我们走 `DRM_MSM`）。
+- **`sound`（235 个 .o，含大量 USB sound codec）**。一加6 的音频走
+  AFE/SOUL，§16.8 里 `sound` 服务因为只认 `comma tizi`/`comma mici`
+  已经没启用 —— 内核这半边的 USB/ALSA codec 堆也在陪跑。
+- **`fs/btrfs`、`fs/9p`、`net/sunrpc`**。rootfs 是 ext4/erofs、
+  cache 是 vfat，一个都不需要。
+
+`dtbs` 那 2800 次 dtc 调用已经在本次构建里改掉了（只点名要
+`sdm845-oneplus-{enchilada,fajita}.dtb`）。
+
+**这一节先不动手**。原因：上面每一项都是"在静态分析上成立"，
+但关掉的代价是**无法在这台机器上验证**的运行时行为 —— 特别是
+`sound` 那半边，一加6 的 AFE 具体用哪个 codec 驱动、走 SOUL 还是走
+旧 sound card 路径，只有真机 `dmesg` 能确认。§16.8 里 `sound` 服务
+的处理方式（注释里写明"没有真机信息之前不猜设备名"）就是同一类判断。
+先把机会记下来；等实机验证清单（§16.10）跑完、`dmesg` 里确认了
+音频实际路径，再一次性砍，并配合 `olddefconfig` 零漂移 +
+`check_defconfig.sh` 全过两道门。
+
+
+
 前面 §16.1–§16.9 全是静态推演。下面这些**只能在一加6 上确认**，按"多快能查"
 和"阻塞程度"排。刷完机先看第 1、2 条。
 
@@ -1762,3 +1805,45 @@ ls -la /dev/dri /dev/video* 2>&1
 mount | grep -E 'cache|overlay|firmware'
 lsusb
 ```
+
+### 16.11 构建耗时：配置里混了大量与本机无关的子系统
+
+`make -j5 Image.gz dtbs modules` 一轮下来按目录统计的 `.o` 数：
+
+```
+1505 drivers    538 net    456 fs    277 lib
+ 252 kernel     236 arch   235 sound
+```
+
+`drivers` 下面最占地方的几个：
+
+```
+369 clk    224 acpi    90 pci    89 pinctrl    66 soc
+ 65 tty     64 char    61 phy    51 regulator
+ 44 xen                     44 dma
+```
+
+几个明显不该在一加6 上编的：
+
+- **`acpi`（224 个 .o）**。ARM64 的 ACPI 是给 `x1p42100-*`、`thinkbook-*`
+  那批笔记本/服务器用的。一加6 的整份固件都走 DT，ABL 也不暴露 ACPI 表。
+- **`xen`（44 个 .o）**。Xen hypervisor 前端。手机上没有 hypervisor。
+- **`gpu/drm/arm/display/komeda`**。Allwinner / Raspberry Pi 的显示驱动，
+  和 Adreno 毫无关系（我们走 `DRM_MSM`）。
+- **`sound`（235 个 .o，含大量 USB sound codec）**。一加6 的音频走
+  AFE/SOUL；§16.8 里 `sound` 服务因为只认 `comma tizi`/`comma mici`
+  已经没启用，内核这半边也在陪跑。
+- **`fs/btrfs`、`fs/9p`、`net/sunrpc`**。rootfs 是 ext4/erofs、cache 是
+  vfat，一个都不需要。
+
+`dtbs` 那 2800 次 dtc 调用已经改掉了：只点名要
+`sdm845-oneplus-{enchilada,fajita}.dtb`（两个都注册在 qcom/Makefile 里，
+可以当独立目标，不用改 Makefile）。一次内核构建同时服务两个型号。
+
+**这一节先不动手**。上面每一项在静态分析上都成立，但关掉的代价是
+**无法在这台机器上验证的运行时行为** —— 特别是 `sound` 那半边，
+一加6 的 AFE 具体用哪个 codec 驱动、走 SOUL 还是走旧 sound card 路径，
+只有真机 `dmesg` 能确认。§16.8 里 `sound` 服务的处理方式
+（"没有真机信息之前不猜设备名"）就是同一类判断。
+先把机会记下来；等 §16.10 的验证清单跑完、`dmesg` 确认了音频实际路径，
+再一次性砍，配合 `olddefconfig` 零漂移 + `check_defconfig.sh` 全过两道门。
