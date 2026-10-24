@@ -14,8 +14,12 @@ Port 22
 #ListenAddress 0.0.0.0
 Protocol 2
 # HostKeys for protocol version 2
+#
+# 没有 dsa 这一行：OpenSSH 8.7 起 ssh-keygen 不再支持 DSA，/etc/sv/sshd/run
+# 也不生成它。留着会每次开机打一条 "Load key ...: unsupported key format"，
+# 而且万一将来只剩 dsa 一个条目，sshd 会因 "No supported host key types" 直接
+# 退出。现在剩下三个（rsa/ecdsa/ed25519）都够用。
 HostKey /data/etc/ssh/ssh_host_rsa_key
-HostKey /data/etc/ssh/ssh_host_dsa_key
 HostKey /data/etc/ssh/ssh_host_ecdsa_key
 HostKey /data/etc/ssh/ssh_host_ed25519_key
 

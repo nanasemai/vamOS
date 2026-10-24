@@ -33,11 +33,23 @@ def set_gamma(gamma):
   print("Successfully setup screen calibration")
 
 if __name__ == "__main__":
-  if not os.path.exists(GAMMA_CURVES_FILE):
-    print("No gamma curves found")
+  # 两个前置条件都当"跳过"处理，不要 assert。
+  #
+  # COMMAND_FILE 是 Comma 下行 DRM 驱动（dsi_dwo）挂在 debugfs 上的
+  # MIPI 命令接口。上游 msm/drm 没有这个节点，一加6 上它永远不存在。
+  # 原来写的是 `assert os.path.exists(COMMAND_FILE)`：只要 GAMMA_CURVES_FILE
+  # 出现了、debugfs 接口却没跟上，AssertionError 就直接抛出去，
+  # 服务在 runsv 下反复重启，把日志刷成噪音。
+  #
+  # 反过来先查 COMMAND_FILE 而不是先查 gamma 文件：没有调试接口的话，
+  # 就算 gamma 曲线齐全这个脚本也什么都做不了，早退更清楚。
+  if not os.path.exists(COMMAND_FILE):
+    print(f"MIPI command interface not found at {COMMAND_FILE}, skipping calibration")
     exit(0)
 
-  assert os.path.exists(COMMAND_FILE), "MIPI command interface not found"
+  if not os.path.exists(GAMMA_CURVES_FILE):
+    print(f"No gamma curves found at {GAMMA_CURVES_FILE}")
+    exit(0)
 
   with open(GAMMA_CURVES_FILE, "r") as f:
     gamma = [[int(x, 16) for x in l.strip().split()] for l in f]

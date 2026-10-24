@@ -47,10 +47,19 @@ mkdir -p /var/spool/cron/atjobs
 chmod 0755 /var/spool /var/spool/cron /var/spool/cron/atjobs
 
 # setup /home
+# lowerdir 用 rootfs 自己的 /home：userspace/root/home/ 里的 dotfiles
+# （.bashrc / .gitconfig / .tmux.conf 等）经 COPY 后落在 /home/comma/，就是要
+# 当只读底层的默认内容。原来的 /usr/default/home 在覆盖层里根本不存在，
+# mount 会 EROFS/ENOENT 失败，/home overlay 起不来，comma 用户没有家目录。
+#
+# upperdir/workdir 放在 /rwtmp（100M tmpfs），和挂载点不共用文件系统，不会成环。
+# 挂载本身覆盖在 /home 上：内核在挂载生效前就解析完 lowerdir，所以
+# 「lowerdir 就是挂载点」这种自覆盖是安全的。
 mkdir -p /rwtmp/home_work
 mkdir -p /rwtmp/home_upper
 chmod 755 /rwtmp/*
-mount -t overlay overlay -o lowerdir=/usr/default/home,upperdir=/rwtmp/home_upper,workdir=/rwtmp/home_work /home
+mount -t overlay overlay -o lowerdir=/home,upperdir=/rwtmp/home_upper,workdir=/rwtmp/home_work /home \
+  || echo "WARN: /home overlay mount failed (lowerdir=/home)"
 
 # /etc
 mkdir -p /data/etc
@@ -65,6 +74,13 @@ chown -R comma:comma /cache/
 # /data/ssh
 mkdir -p /data/ssh
 chown comma: /data/ssh
+
+# /data/media/0 —— comma.sh 一开机就 `sudo chown comma: /data/media`，
+# 目录不存在会报错（非致命，但每次启动一条噪音）。
+# /data/params/d —— openpilot 的参数目录。openpilot 自己会 makedirs，
+# 但 setup 流程会先读它，提前建好避免竞态。
+mkdir -p /data/media/0 /data/params/d
+chown -R comma:comma /data/media /data/params
 
 # /data/tmp - clear out
 rm -rf /data/tmp/

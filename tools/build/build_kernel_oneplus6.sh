@@ -57,6 +57,24 @@ PATCHES_DIR="${PROJECT_ROOT}/kernel/patches/oneplus6"
 
 ARCH="arm64"
 CROSS_COMPILE="aarch64-none-elf-"
+
+# 交叉编译必须挂 ccache，否则每次都是冷编译。
+#
+# 之前脚本挂了 /ccache 卷、注释里也写着"ccache 复用已成功的对象文件"，
+# 但 make 的 CC 从来没设过 —— make 默认直接调 aarch64-none-elf-gcc，
+# ccache 完全在编译路径之外，`ccache -s` 显示 0.00% 就是这个的直接证据。
+# 后果是每次内核构建都从头花 ~100 分钟；而本树在 aarch64-none-elf-gcc 15.2
+# 上偶发瞬时 ICE，docker_make 靠"重试时前面对象全部命中缓存"才便宜。
+# 没有缓存，4 次重试就是 4 个 100 分钟。
+#
+# CC 用带空格的 "ccache <编译器>" 写法：内核 Makefile 按词展开 $(CC)，
+# 等价于把 ccache 当编译器前置。只影响目标编译 —— 交叉编译时 HOSTCC
+# 仍是 gcc，主机工具（fixdep / kconfig / modpost）不走 ccache。
+#
+# CCACHE_DIR 必须显式给：ccache 默认写 $HOME/.ccache，容器里 HOME 指向
+# host 的 /home/ubuntu，会把缓存写进用户目录而不是挂进来的 build/ 卷。
+KERNEL_CC="ccache ${CROSS_COMPILE}gcc"
+CCACHE_DIR="${BUILD_DIR}/.ccache-kernel"
 HOST_OS="$(uname)"
 HOST_ARCH="$(uname -m)"
 CONTAINER_ID=""
@@ -180,22 +198,32 @@ fi
 # ------------------------------------------------------------------------------
 # Step 2: 清理上一次的产物
 # ------------------------------------------------------------------------------
+# build/out 整个删掉，不做"选择性清理"。理由：
+#   build/out 是 kbuild 的 O= 暂存目录，里面的东西全是派生品，删掉没有代价。
+#   选择性清理（只删 Image.gz / .tmp_versions）会漏掉跨工具链的主机工具产物：
+#   有人为了快速看配置在 **host** 上跑一次 `make O=build/out olddefconfig`，
+#   就会在 build/out/scripts/kconfig/ 下留下 x86-64 的 conf。容器里那个 ELF
+#   的解释器 /lib64/ld-linux-x86-64.so.2 不存在，内核报的却是
+#   "scripts/kconfig/conf: No such file or directory" —— 一个存在着的文件
+#   报 ENOENT，四份日志全是这一条，完全看不出真正原因。
+#   同理 scripts/basic/fixdep、scripts/mod/modpost 也是 host 二进制。
+# ccache 挂在 build/.ccache-kernel，对象文件照样命中，全清只多花十几秒的
+# kconfig/scripts 重建，换掉一整类"脏暂存目录"的排查时间，划算。
 echo ""
 echo "[2/7] 清理上次产物 ..."
-rm -rf "${OUT_DIR}"/.tmp_versions 2>/dev/null || true
+rm -rf "${OUT_DIR}"
+mkdir -p "${OUT_DIR}"
 rm -rf "${ROOTFS_DIR}/boot/"* 2>/dev/null || true
 rm -rf "${ROOTFS_DIR}/lib/modules" 2>/dev/null || true
 # 固件也一起清：不清的话，kernel/firmware 里**删掉**的文件会永久留在暂存树里、
 # 继而被打进镜像。名字没变的话驱动会静默加载到一份早已作废的固件
 # （GPU/venus/IPA 都吃这个），排查时会以为"固件明明在啊"。
 rm -rf "${ROOTFS_DIR}/lib/firmware" 2>/dev/null || true
-# 删除上一次的 Image.gz，否则构建失败时后面的 test -f 会被过期产物骗过
-rm -f "${OUT_DIR}/arch/arm64/boot/Image.gz" 2>/dev/null || true
 rm -f "${ROOTFS_DIR}/boot-workdir/kernel-dtb" 2>/dev/null || true
 # 上次留下的 tar 也一起删：不清的话，这次编译到一半崩了，build_system.sh 仍会
 # 拿着**上一次**的模块去拼 rootfs，产物看起来是好的，实际上是新旧混杂的镜像。
 rm -f "${BUILD_DIR}/kernel-rootfs.tar" "${BUILD_DIR}/kernel-release" "${BUILD_DIR}/kernel-source-revision" 2>/dev/null || true
-echo "[OK] 清理完成"
+echo "[OK] 清理完成（${OUT_DIR} 已清空）"
 
 # ------------------------------------------------------------------------------
 # Step 3: Docker builder 镜像
@@ -346,7 +374,25 @@ if [ -n "${JOBS_OVERRIDE:-}" ]; then
     fi
 fi
 echo "[INFO] 并行度: ${PARALLEL_JOBS} (${JOBS_SOURCE}; 核数 $(nproc), 可用内存 ${AVAIL_MEM_MB}MB, ~2000MB/job)"
-echo "[INFO] 预计 10-30 分钟"
+echo "[INFO] 编译器:   ${KERNEL_CC}"
+echo ""
+
+# ccache 可用性自检。这一步不是形式主义：本脚本历史上出现过"挂了 ccache 卷、
+# 注释也声称在用，但 CC 从没设过"的情况，结果是每次构建都冷编译，
+# 而 4 次重试全靠缓存命中才划算。打印出来，让"缓存到底有没有生效"在日志里可见。
+CCACHE_VER=$(sudo docker exec -i "$CONTAINER_ID" bash -c "command -v ccache >/dev/null 2>&1 && ccache --version | head -1" 2>/dev/null || echo "")
+if [ -z "${CCACHE_VER}" ]; then
+    echo "[WARN] 容器里没有 ccache，本次构建将完全冷编译"
+elif ! sudo docker exec -i "$CONTAINER_ID" bash -c "test -w ${CCACHE_DIR}" 2>/dev/null; then
+    echo "[WARN] ${CCACHE_DIR} 不可写，ccache 会退化成直调编译器（缓存无效）"
+else
+    echo "[INFO] ccache: ${CCACHE_VER}"
+    echo "[INFO] 缓存目录: ${CCACHE_DIR} (可写)"
+    # 命中率统计放到脚本末尾一起打印，这里只看基线。
+    # 注意 ccache -s 输出到 **stderr**，管道前必须 2>&1，否则 2>/dev/null
+    # 会把整份统计删掉、sed 一个都拿不到。
+    sudo docker exec -i "$CONTAINER_ID" bash -c "ccache -s 2>&1 | sed -n '1,4p'" 2>/dev/null || true
+fi
 echo ""
 
 # docker_make：本树在 aarch64-none-elf-gcc 15.2 上偶发 GCC ICE（编译器段错误）。
@@ -360,7 +406,7 @@ docker_make() {
     for attempt in $(seq 1 "${attempts}"); do
         echo "[INFO] make 第 ${attempt}/${attempts} 次 ..."
         if sudo docker exec -i "$CONTAINER_ID" bash -c "set -o pipefail; cd ${KERNEL_DIR} && \
-            make O=${OUT_DIR} ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${make_args} 2>&1 | tee -a ${LOG_FILE}"; then
+            CCACHE_DIR='${CCACHE_DIR}' make O=${OUT_DIR} ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} CC='${KERNEL_CC}' ${make_args} 2>&1 | tee -a ${LOG_FILE}"; then
             return 0
         fi
         echo "[WARN] make 第 ${attempt} 次失败（大概率是瞬时 GCC ICE），重试 ..."
@@ -516,4 +562,16 @@ echo "       或 ./vamos build all   （boot.img + 相机/IMU deb + rootfs + 验
 echo "日志: ${LOG_FILE}"
 echo ""
 echo "ccache 统计:"
-sudo docker exec -i "$CONTAINER_ID" ccache -s 2>/dev/null || echo "  ccache 不可用"
+# ccache -s 输出到 stderr，必须 2>&1；原来那个 2>/dev/null 会把整份统计删光，
+# 而 ccache -s 退出码仍是 0，所以 || 的回退也永远不会触发 —— 只留下一行孤零零
+# 的标题。修掉它，顺手把"缓存有没有真的用上"变成构建失败级别的可读信号。
+CCACHE_STATS=$(sudo docker exec -i "$CONTAINER_ID" bash -c "ccache -s 2>&1" 2>/dev/null || echo "")
+if [ -z "${CCACHE_STATS}" ]; then
+    echo "  ccache 不可用（本次构建是冷编译）"
+else
+    echo "${CCACHE_STATS}" | sed 's/^/  /'
+    # MISSes 远多于 HITs 是"缓存挂了但没生效"的典型形状。第一次构建 miss 多
+    # 是正常的，第二次还是这样就该回头查 CC / CCACHE_DIR 有没有传进去。
+    echo "${CCACHE_STATS}" | grep -Eq 'HITS:\s+[1-9]' || \
+        echo "  [WARN] 命中率 0 —— 确认 CC 和 CCACHE_DIR 真的传进了 make"
+fi

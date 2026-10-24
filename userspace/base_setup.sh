@@ -94,6 +94,7 @@ xbps-install -y \
   smartmontools \
   sqlite-devel \
   squashfs-tools \
+  eudev \
   tmux \
   traceroute \
   iw \

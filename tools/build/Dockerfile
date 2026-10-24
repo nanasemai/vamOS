@@ -109,6 +109,37 @@ RUN chown -R comma:comma /home/comma
 RUN printf '\nif [ -f ~/.bash_aliases ]; then\n    . ~/.bash_aliases\nfi\n' >> /home/$USERNAME/.bashrc
 RUN mkdir -p /root/.config
 
+# 补齐两个没有 /etc/sv 目录的服务。必须在启用循环**之前**，否则它们永远拿不到
+# runsvdir 的符号链接（原实现里 sshd 的 run 脚本写在下面 120 行之后，
+# 循环跑到 sshd 时目录还不存在，被 guard 跳过，结果 SSH 服务从来没被启用）。
+#
+# sshd：openssh-server 不在包里，也没有包提供 /etc/sv/sshd，只能手写。
+# 主机密钥放 /data/etc/ssh/ —— /data 在 rootfs 里可写（本分支 rootfs 就在
+# userdata 上），所以首次启动生成一次之后就能持久保存。
+RUN mkdir -p /etc/sv/sshd && \
+    echo '#!/bin/sh' > /etc/sv/sshd/run && \
+    echo 'exec 2>&1' >> /etc/sv/sshd/run && \
+    echo '# Create ssh host keys if needed (on first boot)' >> /etc/sv/sshd/run && \
+    echo 'mkdir -p /data/etc/ssh' >> /etc/sv/sshd/run && \
+    echo 'if [ ! -f /data/etc/ssh/ssh_host_ed25519_key ]; then' >> /etc/sv/sshd/run && \
+    echo '  ssh-keygen -t ed25519 -f /data/etc/ssh/ssh_host_ed25519_key -N ""' >> /etc/sv/sshd/run && \
+    echo '  ssh-keygen -t rsa -b 4096 -f /data/etc/ssh/ssh_host_rsa_key -N ""' >> /etc/sv/sshd/run && \
+    echo '  ssh-keygen -t ecdsa -f /data/etc/ssh/ssh_host_ecdsa_key -N ""' >> /etc/sv/sshd/run && \
+    echo 'fi' >> /etc/sv/sshd/run && \
+    echo 'exec /usr/bin/sshd -D' >> /etc/sv/sshd/run && \
+    chmod +x /etc/sv/sshd/run
+
+# nftables：Void 的 nftables 包只提供 CLI，不带 runit 服务。
+# 规则本身在覆盖层的 /etc/nftables.conf 里（拦 wwan0 入站）。
+# 一次跑完就 sleep，和 fs_setup / init-qcom 那套 one-shot 模式一致 ——
+# 规则在内存里由 nft 内核态表持久化，服务退出不会丢。
+RUN mkdir -p /etc/sv/nftables && \
+    echo '#!/bin/sh' > /etc/sv/nftables/run && \
+    echo 'exec 2>&1' >> /etc/sv/nftables/run && \
+    echo 'nft -f /etc/nftables.conf' >> /etc/sv/nftables/run && \
+    echo 'exec sleep infinity' >> /etc/sv/nftables/run && \
+    chmod +x /etc/sv/nftables/run
+
 # Enable runit services
 #
 # /etc/sv/<svc> 有的来自 userspace/root/ 覆盖层，有的来自 Void 包。
@@ -116,11 +147,63 @@ RUN mkdir -p /root/.config
 # runsvdir 每次重启都报一条错误（不致命，但日志里全是噪音，容易掩盖真问题）。
 # 现在缺的就在构建日志里明说，好让「该服务的 /etc/sv 目录漏在覆盖层里」
 # 和「包没装」这两种情况立刻可见。
+#
+# gpio / lte / power_monitor / power_drop_monitor / brightnessd 这五个服务
+# 刻意**不**在这里启用 —— 它们绑死 Comma tici 主板的物理硬件，一加6 上不但
+# 没用，而且有几个是主动的危害：
+#
+#   gpio      /usr/comma/gpio.sh 按 Comma 引脚表导出 TLMM 30/49/134/41/50/116/
+#             124/34/33/32/52（HUB_RST_N、PANDA_1V8_EN_N、ST_RST_N、GPS_* ...），
+#             最后一行无条件 `gpio 30 1`，即 direction=out + value=1。
+#             一加6 的 panel 节点里 `esd-pins { pins = "gpio30"; }` —— **30 是
+#             屏幕 ESD 保护脚**。被这个服务抢走并锁成输出，和 DRM 面板驱动直接
+#             冲突。这是最实的一条。
+#
+#   lte       /usr/comma/lte/lte.sh 的 `start` 分支是
+#               until is_online; do reset; power_button; done
+#             is_online 靠 `lsusb -d "0x05c6:"` 判断，0x05c6 是 Comma 自己的
+#             USB 厂商号，一加6 上永远不存在。于是它退化成每 ~2 秒拨一次
+#             gpio50 / gpio116 的**死循环**，永远跑不完。
+#
+#   power_drop_monitor  整个脚本在跟一颗 INA231 电池监测芯片对话：
+#             I2C 地址 0x40、`smbus2.SMBus`、PM8998 GPIO4 的电源告警脚、
+#             /sys/fs/cgroup/comma/cgroup.procs。一加6 上没有这颗 INA231，
+#             也没有 PM8998（用的是 pmi8998/pm8996），PM8998_BASE 回退成 0，
+#             于是告警脚变成 gpio3 —— 一个根本没导出的引脚，open() 直接失败。
+#             更要命的是电压读数有 `/sys/class/hwmon/hwmon1/in1_input` 兜底：
+#             万一 hwmon1 存在但是别的传感器，它会把那个值当成电池电压，
+#             低于 4000mV 就 SIGKILL 掉整个 comma cgroup 然后关机。
+#
+#   power_monitor   读 `/dev/input/by-path/platform-894000.i2c-event`，
+#             那是 PM8998 的中断输入设备，一加6 上不存在，每次启动失败。
+#
+#   brightnessd  写 `/sys/class/backlight/panel0-backlight/`（Comma 的下行内核
+#             名字）。更根本的问题是：本分支 DTB 里**没有 backlight 节点**
+#             （dtc 反编译确认 compatible 里没有任何 *-backlight，
+#             唯一的 "backlight" 是 pmi8998 LED 节点的 label），
+#             所以 /sys/class/backlight/ 下没有面板可调，这个服务没有作用对象。
+#
+#   sound        /usr/comma/sound/sound_init.sh 末尾按
+#             case "$(cat /sys/firmware/devicetree/base/model)" in
+#               "comma tizi") card=commatizi ... ;;
+#               "comma mici") card=commamici ... ;;
+#               *) echo "Unsupported sound card: $model" >&2; exit 1 ;;
+#             esac
+#             来决定 ALSA 卡。一加6 的 model 不在表里，直接 exit 1，run 脚本里
+#             `sound_init.sh || exit 1` 把整个服务判失败。commatizi/commamici
+#             的卡名和 SEC_MI2S_RX 路由也都是 Comma 的音频拓扑。
+#             一加6 的音频走 AFE/SOUL，得按实际 AFE 设备名重写，
+#             没有真机信息之前不猜设备名。
+#
+# 一加6 的基带不走 GPIO 复位，走 qrtr-ns / rmtfs / tqftpserv / pd-mapper
+# 这条标准 QMI over SMD 路径（下面都在启用列表里）。
+# 脚本本身留在 rootfs 里（lte.nmconnection 和 udev 规则都是无害的），
+# 只是不给它们 /etc/runit/runsvdir/default/ 的符号链接 —— 要恢复很容易。
 RUN for svc in \
-  ipa_fws brightnessd fs_setup gpio init-qcom lte \
-  avahi-ssh-publish power_monitor power_drop_monitor \
+  ipa_fws fs_setup init-qcom \
+  avahi-ssh-publish \
   screen_calibration serial-hostname \
-  sound varwatch busybox-ntpd \
+  varwatch busybox-ntpd \
   irsc_util leprop adsp cdsp \
   qrtr-ns rmtfs tqftpserv pd-mapper \
   comma bluetoothd magic \
@@ -142,7 +225,10 @@ RUN sed -i 's/FileCreateMode 0640/FileCreateMode 0644/' /etc/rsyslog.conf
 
 # Set executable permissions
 RUN chmod +x /usr/comma/comma.sh /usr/comma/get-serial.sh /usr/comma/get-bt-address.sh /usr/comma/set-bt-address.sh /usr/comma/set_ssh.sh /usr/comma/set_ncm.sh /usr/comma/fs_setup.sh /usr/bin/journalctl /etc/sv/bluetoothd/run
+# core-services/ 也要可执行：/etc/runit/1 里 stage 1 会对 02-kmods.sh 做
+# `[ -x ]` 检查，权限不对就静默跳过，模块一个都不会加载。
 RUN chmod +x /etc/runit/1 /etc/runit/2 /etc/runit/3
+RUN chmod +x /etc/runit/core-services/*.sh 2>/dev/null || true
 
 # Shutdown wrappers - send wall broadcast like systemd does on Ubuntu
 # Only poweroff and reboot: halt/shutdown must NOT be wrapped because Void's
@@ -224,24 +310,9 @@ RUN usermod -p '$6$vamosdev$NmMcideymvdAilEr.m7OeTX.fnt3H4UmcgheKB39rkrmebVfvZIU
     usermod -p '$6$vamosdev$NmMcideymvdAilEr.m7OeTX.fnt3H4UmcgheKB39rkrmebVfvZIUE17zjgtOxi7K07uGicamzFFbkFLE3EjQj/' root
 
 # DEBUG: SSH setup - sshd_config expects keys in /data/etc/ssh/
-# The /data partition is mounted at runtime from /dev/sda12
-# We need to create the ssh directory structure on first boot
+# /data 在 rootfs 里可写（本分支 rootfs 就在 userdata 上），首次启动生成
+# 主机密钥后持久保存。/etc/sv/sshd/run 在上面的启用循环之前创建。
 RUN mkdir -p /var/chroot/ssh
-
-# DEBUG: Custom sshd run script - /data is mounted in runit stage 1
-# mkdir 是必需的：/etc/sv/sshd 不在 userspace/root/ 里（也没有 openssh-server
-# 包提供它），echo 重定向不会自己建目录，Docker 层会直接报 No such file。
-RUN mkdir -p /etc/sv/sshd && \
-    echo '#!/bin/sh' > /etc/sv/sshd/run && \
-    echo 'exec 2>&1' >> /etc/sv/sshd/run && \
-    echo '# Create ssh host keys if needed (on first boot)' >> /etc/sv/sshd/run && \
-    echo 'mkdir -p /data/etc/ssh' >> /etc/sv/sshd/run && \
-    echo 'if [ ! -f /data/etc/ssh/ssh_host_ed25519_key ]; then' >> /etc/sv/sshd/run && \
-    echo '  ssh-keygen -t ed25519 -f /data/etc/ssh/ssh_host_ed25519_key -N ""' >> /etc/sv/sshd/run && \
-    echo '  ssh-keygen -t rsa -b 4096 -f /data/etc/ssh/ssh_host_rsa_key -N ""' >> /etc/sv/sshd/run && \
-    echo '  ssh-keygen -t ecdsa -f /data/etc/ssh/ssh_host_ecdsa_key -N ""' >> /etc/sv/sshd/run && \
-    echo 'fi' >> /etc/sv/sshd/run && \
-    echo 'exec /usr/bin/sshd -D' >> /etc/sv/sshd/run
 
 RUN ldconfig
 

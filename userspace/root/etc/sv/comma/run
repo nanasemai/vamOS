@@ -21,9 +21,19 @@ for i in $(seq 1 300); do
   sleep 0.1
 done
 
-# Create cgroup so power_drop_monitor can kill all openpilot processes at once
-mkdir -p /sys/fs/cgroup/comma
-echo $$ > /sys/fs/cgroup/comma/cgroup.procs
+# 建个逗号 cgroup 并把本进程挪进去。
+# 原本的唯一用途是让 power_drop_monitor 一次 SIGKILL 掉全部 openpilot 进程 ——
+# 但那个服务在一加6 上不启用（它依赖 Comma 主板上的 INA231 和 PM8998，
+# 见 tools/build/Dockerfile 里 "power_drop_monitor" 那段说明）。
+# 留在这里的理由：cgroup 目录本身无害，而且它是 openpilot 自己的隔离边界，
+# 万一以后把降载/断电保护按一加6 的电源拓扑重写，这里就是现成的挂点。
+# 注意 power_drop_monitor.py 里 COMMA_CGROUP_PROCS 写的是 cgroup1 路径
+# /sys/fs/cgroup/comma/cgroup.procs，本分支挂的是 unified cgroup2，
+# 所以就算哪天启用了，它读到的也不是这里写的这份。
+if [ -d /sys/fs/cgroup ]; then
+  mkdir -p /sys/fs/cgroup/comma
+  echo $$ > /sys/fs/cgroup/comma/cgroup.procs 2>/dev/null || true
+fi
 
 # Run as comma user with proper groups and PAM limits
 # sudo -u properly inherits groups and applies /etc/security/limits.conf

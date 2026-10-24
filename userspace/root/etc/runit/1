@@ -101,39 +101,64 @@ wait_for_dev() {
 
 # Mount a partition by partlabel
 # Usage: mount_part <partlabel> <mountpoint> <options>
+#
+# 不写死 -t：Comma 设备的 cache 是 ext4，一加6 出厂的 cache 是 FAT，
+# 写死 ext4 在 vfat 分区上直接 mount 失败。用 blkid 读实际文件系统，
+# 读不到就退回让 mount 自己探测。
+# 顺带 mkdir 挂载点：userspace/root/ 里没有 cache/，不建的话
+# mount 报 "mount point does not exist"，而且每次都要重新查一遍为什么。
 mount_part() {
     label="$1"
     mnt="$2"
     opts="${3:-ro}"
     dev="/dev/disk/by-partlabel/$label"
 
-    if wait_for_dev "$dev" 60; then
-        if mount -o "$opts" "$dev" "$mnt"; then
-            echo "=> $mnt mounted ($label)"
-        else
-            echo "WARN: $mnt mount failed"
-        fi
-    else
+    if ! wait_for_dev "$dev" 60; then
         echo "WARN: $label partition not found"
+        return 0
+    fi
+
+    mkdir -p "$mnt"
+
+    fs=$(blkid -o value -s TYPE "$dev" 2>/dev/null || echo "")
+    if [ -n "$fs" ]; then
+        echo "=> $dev ($label) 是 $fs -> $mnt"
+        mount -t "$fs" -o "$opts" "$dev" "$mnt" \
+            && echo "=> $mnt mounted" \
+            || echo "WARN: $mnt mount failed"
+    else
+        # blkid 没装、或分区表还没刷出来。退回 mount 自己的探测。
+        mount -o "$opts" "$dev" "$mnt" \
+            && echo "=> $mnt mounted (文件系统自动探测)" \
+            || echo "WARN: $mnt mount failed"
     fi
 }
 
 echo "=> Mounting partitions..."
-# Critical partitions (with options: partlabel:mountpoint:options)
+# 格式：partlabel:挂载点:挂载选项
 #
-# 注意：**不再挂 userdata**。本分支（oneplus-mainline）的根文件系统本身就在
+# 注意：**不挂 userdata**。本分支（oneplus-mainline）的根文件系统本身就在
 # userdata 分区上（initramfs 把它挂到 /mnt 后 switch_root），/data 是 rootfs
 # 里的普通目录（userspace/root/data），可直接写。这里如果再把 userdata 挂到
 # /data，mount 会返回 EBUSY（同一个 superblock 已经在 / 上了）——不会砖，
 # 但每次开机一条 WARN，而且查起来会误判成"分区表有问题"。
 #
-# Comma 那套是 rootfs 在 system 分区、userdata 挂到 /data；一加6 没有
-# system 分区，两者合并了。
-# Note: /firmware (modem_a) is mounted earlier before udev
+# 注意：**不挂 persist**。openpilot 的 persist 解析到 ~/.comma/persist，
+# 不依赖 /persist 挂载点；参考项目 ubuntu-sdm845-mainline 的 fstab 只有
+# 一条 /dev/sda17 -> /，同样不挂 persist。
+#
+# 注意：**不挂 dsp_a**。一加6 出厂分区表里没有这个标签，ADSP 固件走
+# 内核内置的 /lib/firmware 路径（build_kernel_oneplus6.sh 打进 rootfs），
+# 不需要独立分区。
+#
+# 注意：**不挂 modem 分区到 /firmware**。参考项目在一加6 上同样不挂 ——
+# ADSP/mPSS 固件全部走 /lib/firmware。上面那段 modem_a 尝试保留着
+# （刷过定制分区表的设备用得上），挂不上只 WARN，不影响后续启动。
+#
+# cache 的选项只留三个通用项：noexec/nodev/nosuid 对 ext4 和 vfat 都有效，
+# relatime/data=ordered/discard 是 ext4 专有的，落在 FAT 分区上会 mount 失败。
 for part in \
-    "dsp_a:/dsp:ro" \
-    "persist:/persist:ro" \
-    "cache:/cache:relatime,data=ordered,noauto_da_alloc,discard,noexec,nodev,nosuid" \
+    "cache:/cache:noexec,nodev,nosuid" \
 ; do
     label="${part%%:*}"
     rest="${part#*:}"
